@@ -1,0 +1,30 @@
+{
+    "en": {
+        "proj_mgr": "Project Manager",
+        "search": "Global Search",
+        "harvest": "Today's Harvest",
+        "open_arch": "Open Archive",
+        "settings": "Settings",
+        "tip_title": "Tip of the Day",
+        "new_proj": "New project name:",
+        "create": "Create",
+        "daily_tab": "Daily Tasks",
+        "no_harvest": "No harvest for today yet!",
+        "arch_title": "Today's Achievements",
+        "no_arch": "Archive file does not exist yet."
+    },
+    "ar": {
+        "proj_mgr": "مدير المشاريع",
+        "search": "البحث الشامل",
+        "harvest": "حصاد اليوم",
+        "open_arch": "فتح الأرشيف",
+        "settings": "الإعدادات",
+        "tip_title": "نصيحة اليوم",
+        "new_proj": "اسم المشروع الجديد:",
+        "create": "إنشاء",
+        "daily_tab": "مهام اليوم",
+        "no_harvest": "لا يوجد حصاد لليوم بعد!",
+        "arch_title": "إنجازات اليوم",
+        "no_arch": "ملف الأرشيف غير موجود بعد."
+    }
+}
