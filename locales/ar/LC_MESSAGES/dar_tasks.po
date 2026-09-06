@@ -1,0 +1,240 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: Dar Tasks 1.0\n"
+"POT-Creation-Date: 2026-09-06 16:45+0300\n"
+"PO-Revision-Date: 2026-09-06 16:45+0300\n"
+"Language: ar\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "proj_mgr"
+msgstr "مدير المشاريع"
+
+msgid "search"
+msgstr "البحث الشامل"
+
+msgid "harvest"
+msgstr "حصاد اليوم"
+
+msgid "open_arch"
+msgstr "فتح الأرشيف"
+
+msgid "open_notepad"
+msgstr "فتح في المفكرة"
+
+msgid "settings"
+msgstr "الإعدادات"
+
+msgid "daily_tab"
+msgstr "مهام اليوم"
+
+msgid "no_harvest"
+msgstr "لا يوجد حصاد لليوم بعد!"
+
+msgid "arch_title"
+msgstr "إنجازات اليوم"
+
+msgid "no_arch"
+msgstr "ملف الأرشيف غير موجود بعد."
+
+msgid "new_proj"
+msgstr "اسم المشروع الجديد:"
+
+msgid "edit_task"
+msgstr "تعديل المهمة:"
+
+msgid "filter"
+msgstr "تصفية:"
+
+msgid "tasks"
+msgstr "المهام:"
+
+msgid "add"
+msgstr "إضافة:"
+
+msgid "confirm_archive"
+msgstr "أرشفة المهمة؟"
+
+msgid "confirm_delete"
+msgstr "حذف المهمة؟"
+
+msgid "Project Manager"
+msgstr "مدير المشاريع"
+
+msgid "Global Search"
+msgstr "البحث الشامل"
+
+msgid "Today's Harvest"
+msgstr "حصاد اليوم"
+
+msgid "Open Archive"
+msgstr "فتح الأرشيف"
+
+msgid "Open in Notepad"
+msgstr "فتح في المفكرة"
+
+msgid "Settings"
+msgstr "الإعدادات"
+
+msgid "Daily Tasks"
+msgstr "مهام اليوم"
+
+msgid "No harvest for today yet!"
+msgstr "لا يوجد حصاد لليوم بعد!"
+
+msgid "Today's Achievements"
+msgstr "إنجازات اليوم"
+
+msgid "Archive file does not exist yet."
+msgstr "ملف الأرشيف غير موجود بعد."
+
+msgid "New project name:"
+msgstr "اسم المشروع الجديد:"
+
+msgid "Edit task:"
+msgstr "تعديل المهمة:"
+
+msgid "Filter:"
+msgstr "تصفية:"
+
+msgid "Tasks:"
+msgstr "المهام:"
+
+msgid "Add:"
+msgstr "إضافة:"
+
+msgid "Archive task?"
+msgstr "أرشفة المهمة؟"
+
+msgid "Delete task?"
+msgstr "حذف المهمة؟"
+
+msgid "&Search:"
+msgstr "&البحث:"
+
+msgid "&Results:"
+msgstr "&النتائج:"
+
+msgid "Search Query"
+msgstr "البحث"
+
+msgid "Search Results"
+msgstr "قائمة النتائج"
+
+msgid "&Notepad"
+msgstr "&المفكرة"
+
+msgid "&Close"
+msgstr "إ&غلاق"
+
+msgid "&Projects:"
+msgstr "&المشاريع:"
+
+msgid "Projects List"
+msgstr "قائمة المشاريع"
+
+msgid "&New"
+msgstr "&جديد"
+
+msgid "&Open"
+msgstr "&فتح"
+
+msgid "&Pin ⭐"
+msgstr "&تثبيت ⭐"
+
+msgid "Move &Up"
+msgstr "تحريك لأ&على"
+
+msgid "Move &Down"
+msgstr "تحريك لأ&سفل"
+
+msgid "&Rename"
+msgstr "إعادة الت&سمية"
+
+msgid "Note&pad"
+msgstr "&المفكرة"
+
+msgid "&Delete"
+msgstr "&حذف"
+
+msgid " (daily)"
+msgstr " (يومية)"
+
+msgid "Project name:"
+msgstr "اسم المشروع الجديد:"
+
+msgid "New Project"
+msgstr "مشروع جديد"
+
+msgid "Rename Project"
+msgstr "إعادة تسمية المشروع"
+
+msgid "Delete project '{display}'?"
+msgstr "هل أنت متأكد من حذف المشروع '{display}'؟"
+
+msgid "Confirm Delete"
+msgstr "تأكيد الحذف"
+
+msgid "Confirm on &archive"
+msgstr "تأكيد الأرشفة"
+
+msgid "Confirm on &delete"
+msgstr "تأكيد الحذف"
+
+msgid "Auto-save interval (&seconds):"
+msgstr "معدل الحفظ التلقائي (&ثوانٍ):"
+
+msgid "&Language:"
+msgstr "الل&غة:"
+
+msgid "&Reset Defaults"
+msgstr "استعادة الافتراضي"
+
+msgid "&Save"
+msgstr "&حفظ"
+
+msgid "&Cancel"
+msgstr "إل&غاء"
+
+msgid "Reset settings to default?"
+msgstr "هل أنت متأكد من استعادة الإعدادات الافتراضية؟"
+
+msgid "Confirm Reset"
+msgstr "تأكيد"
+
+msgid "Mark Complete (Ctrl+M)"
+msgstr "تمييز كمكتمل (Ctrl+M)"
+
+msgid "Pin ⭐"
+msgstr "تثبيت ⭐"
+
+msgid "Edit (F2)"
+msgstr "تعديل (F2)"
+
+msgid "Copy (Ctrl+C)"
+msgstr "نسخ (Ctrl+C)"
+
+msgid "Delete (Del)"
+msgstr "حذف (Del)"
+
+msgid "Open in Notepad (F4)"
+msgstr "فتح في المفكرة (F4)"
+
+msgid "Add Task"
+msgstr "إضافة مهمة"
+
+msgid "Tasks"
+msgstr "المهام"
+
+msgid "Filter"
+msgstr "تصفية"
+
+msgid "An instance of Dar Tasks is already running."
+msgstr "تطبيق Dar Tasks قيد التشغيل بالفعل."
+
+msgid "Error"
+msgstr "خطأ"
+
+msgid "Info"
+msgstr "معلومات"

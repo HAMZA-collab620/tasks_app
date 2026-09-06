@@ -1,6 +1,7 @@
 """
 Targeted automated test suite for Dar Tasks domain logic and persistence invariants.
 Executes against isolated temporary directories using Python's standard unittest and pathlib.Path.
+Complies rigorously with test-guard principles: real infrastructure, zero fake mocks, and scenario naming.
 """
 
 from pathlib import Path
@@ -11,13 +12,14 @@ import unittest
 from core_models import (
     DAILY_FILENAME,
     DEFAULT_ARCHIVE_NAME,
-    DEFAULT_TRASH_NAME,
-    PROJECT_ORDER_FILENAME,
+    BackupManager,
     ProjectModel,
     ProjectWorkspace,
     SearchEngine,
     SettingsManager,
     Task,
+    Translator,
+    get_project_display_name,
     sanitize_project_name,
 )
 
@@ -35,23 +37,29 @@ class TestProjectWorkspace(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
-    def test_sanitize_project_name(self):
-        self.assertEqual(sanitize_project_name("My Project!@#"), "My Project")
-        self.assertEqual(sanitize_project_name("Safe_Name-1"), "Safe_Name-1")
+    def test_sanitize_project_name_strips_illegal_characters(self):
+        cases = [
+            ("My Project!@#", "My Project"),
+            ("Safe_Name-1", "Safe_Name-1"),
+            ("   leading and trailing   ", "leading and trailing"),
+        ]
+        for raw_input, expected in cases:
+            with self.subTest(raw_input=raw_input):
+                self.assertEqual(sanitize_project_name(raw_input), expected)
 
-    def test_ensure_order_includes_daily(self):
+    def test_ensure_order_includes_daily_when_initializing_workspace(self):
         order = self.workspace.ensure_order()
         self.assertIn(DAILY_FILENAME, order)
         self.assertTrue(self.daily_path.exists())
 
-    def test_create_project(self):
+    def test_create_project_writes_file_and_appends_to_order(self):
         fn = self.workspace.create_project("Alpha Project")
         self.assertEqual(fn, "Alpha Project.txt")
         self.assertTrue(self.workspace.get_project_path(fn).exists())
         order = self.workspace.ensure_order()
         self.assertIn(fn, order)
 
-    def test_rename_project(self):
+    def test_rename_project_updates_disk_file_and_persists_order(self):
         fn = self.workspace.create_project("Old Name")
         new_fn = self.workspace.rename_project(fn, "New Name")
         self.assertEqual(new_fn, "New Name.txt")
@@ -61,11 +69,19 @@ class TestProjectWorkspace(unittest.TestCase):
         self.assertIn("New Name.txt", order)
         self.assertNotIn("Old Name.txt", order)
 
-    def test_cannot_rename_daily(self):
+    def test_rename_project_fails_if_target_file_already_exists(self):
+        p1 = self.workspace.create_project("Existing Alpha")
+        self.workspace.create_project("Existing Beta")
+        # Attempt to rename Alpha to Beta
+        result = self.workspace.rename_project(p1, "Existing Beta")
+        self.assertIsNone(result)
+        self.assertTrue(self.workspace.get_project_path(p1).exists())
+
+    def test_rename_daily_project_is_rejected(self):
         res = self.workspace.rename_project(DAILY_FILENAME, "Other")
         self.assertIsNone(res)
 
-    def test_delete_project(self):
+    def test_delete_project_removes_file_and_purges_order_entry(self):
         fn = self.workspace.create_project("To Delete")
         deleted = self.workspace.delete_project(fn)
         self.assertTrue(deleted)
@@ -73,12 +89,12 @@ class TestProjectWorkspace(unittest.TestCase):
         order = self.workspace.ensure_order()
         self.assertNotIn(fn, order)
 
-    def test_cannot_delete_daily(self):
+    def test_delete_daily_project_is_rejected(self):
         deleted = self.workspace.delete_project(DAILY_FILENAME)
         self.assertFalse(deleted)
         self.assertTrue(self.daily_path.exists())
 
-    def test_toggle_pin_project(self):
+    def test_toggle_pin_project_swaps_star_prefix_in_order(self):
         fn = self.workspace.create_project("Pinnable")
         self.assertTrue(self.workspace.toggle_pin(fn))
         order = self.workspace.ensure_order()
@@ -89,16 +105,37 @@ class TestProjectWorkspace(unittest.TestCase):
         self.assertIn(fn, order)
         self.assertNotIn(f"⭐ {fn}", order)
 
-    def test_move_and_reorder_project(self):
+    def test_move_project_swaps_adjacent_order_entries(self):
         p1 = self.workspace.create_project("P1")
         p2 = self.workspace.create_project("P2")
         order = self.workspace.ensure_order()
         idx_p1 = order.index(p1)
-        idx_p2 = order.index(p2)
         # Swap
         self.assertTrue(self.workspace.move_project(idx_p1, 1))
         new_order = self.workspace.ensure_order()
         self.assertEqual(new_order[idx_p1], p2)
+
+    # Sacred regression test (Rule 6): prevents substring collisions when names share a common suffix
+    def test_exact_path_resolution_no_suffix_collision(self):
+        p_sub = self.workspace.create_project("work")
+        p_full = self.workspace.create_project("homework")
+        path_sub = self.workspace.get_project_path(p_sub).resolve()
+        path_full = self.workspace.get_project_path(p_full).resolve()
+        self.assertNotEqual(path_sub, path_full)
+        self.assertTrue(str(path_full).endswith(str(p_sub)))
+        self.assertEqual(path_sub.name, "work.txt")
+        self.assertEqual(path_full.name, "homework.txt")
+
+    def test_list_projects_returns_clean_domain_descriptors(self):
+        p1 = self.workspace.create_project("Project Clean")
+        projects = self.workspace.list_projects()
+        p1_entry = next((p for p in projects if p["filename"] == p1), None)
+        self.assertIsNotNone(p1_entry)
+        self.assertIn("filename", p1_entry)
+        self.assertIn("path", p1_entry)
+        self.assertIn("readonly", p1_entry)
+        self.assertIn("pinned", p1_entry)
+        self.assertNotIn("display", p1_entry)
 
 
 class TestProjectModel(unittest.TestCase):
@@ -115,25 +152,27 @@ class TestProjectModel(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
-    def test_task_entity_serialization(self):
-        task = Task.from_line("⭐ Buy milk")
-        self.assertEqual(task.title, "Buy milk")
-        self.assertTrue(task.is_pinned)
-        self.assertEqual(task.to_line(), "⭐ Buy milk")
+    def test_task_line_serialization_preserves_title_and_pin_state(self):
+        cases = [
+            ("⭐ Buy milk", "Buy milk", True, "⭐ Buy milk"),
+            ("Read book", "Read book", False, "Read book"),
+            ("⭐   Trimmed task   ", "Trimmed task", True, "⭐ Trimmed task"),
+        ]
+        for raw_line, expected_title, expected_pin, expected_line in cases:
+            with self.subTest(raw_line=raw_line):
+                task = Task.from_line(raw_line)
+                self.assertEqual(task.title, expected_title)
+                self.assertEqual(task.is_pinned, expected_pin)
+                self.assertEqual(task.to_line(), expected_line)
 
-        normal_task = Task.from_line("Read book")
-        self.assertEqual(normal_task.title, "Read book")
-        self.assertFalse(normal_task.is_pinned)
-        self.assertEqual(normal_task.to_line(), "Read book")
-
-    def test_load_tasks_separates_pinned(self):
+    def test_load_tasks_partitions_pinned_before_unpinned(self):
         pinned = [t for t in self.model.tasks if t.is_pinned]
         unpinned = [t for t in self.model.tasks if not t.is_pinned]
         self.assertEqual(len(pinned), 1)
         self.assertEqual(len(unpinned), 2)
         self.assertEqual(pinned[0].title, "Urgent task")
 
-    def test_add_and_atomic_save(self):
+    def test_add_task_and_atomic_save_persists_to_disk(self):
         self.assertTrue(self.model.add_task("New task"))
         self.assertTrue(self.model.save_tasks_atomic())
         with open(self.project_path, "r", encoding="utf-8") as f:
@@ -141,7 +180,7 @@ class TestProjectModel(unittest.TestCase):
         self.assertIn("New task", lines)
         self.assertIn("⭐ Urgent task", lines)
 
-    def test_archive_task_and_harvest(self):
+    def test_archive_task_records_entry_and_appears_in_today_harvest(self):
         task_to_archive = "Normal task 1"
         self.assertTrue(self.model.archive_task(task_to_archive))
         self.assertTrue(self.model.archive_file.exists())
@@ -154,7 +193,7 @@ class TestProjectModel(unittest.TestCase):
         self.assertEqual(len(harvest), 1)
         self.assertIn(task_to_archive, harvest[0])
 
-    def test_delete_task_isolates_in_trash(self):
+    def test_delete_task_isolates_entry_in_trash_file(self):
         task_to_delete = "Normal task 2"
         self.assertTrue(self.model.delete_task(task_to_delete))
         self.assertTrue(self.model.trash_file.exists())
@@ -162,12 +201,90 @@ class TestProjectModel(unittest.TestCase):
             trash_content = f.read()
         self.assertIn(task_to_delete, trash_content)
 
-    def test_undo_archive(self):
+    def test_undo_restores_last_archived_task_to_project(self):
         task_to_archive = "Normal task 1"
         self.assertTrue(self.model.archive_task(task_to_archive))
         self.assertTrue(self.model.undo())
         titles = [t.title for t in self.model.tasks]
         self.assertIn(task_to_archive, titles)
+
+    # Sacred regression test (Rule 6): prevents operating on wrong item when identical titles exist
+    def test_task_disambiguation_by_index(self):
+        self.model.tasks = [
+            Task(title="Same Title", is_pinned=False),
+            Task(title="Same Title", is_pinned=False),
+            Task(title="Distinct Task", is_pinned=False),
+        ]
+        # Archive specifically index 1
+        self.assertTrue(self.model.archive_task(1))
+        self.assertEqual(len(self.model.tasks), 2)
+        self.assertEqual(self.model.tasks[0].title, "Same Title")
+        self.assertEqual(self.model.tasks[1].title, "Distinct Task")
+
+    def test_get_archive_path_defaults_to_base_dir_archive_name(self):
+        path = ProjectModel.get_archive_path(base_dir=self.test_dir)
+        self.assertEqual(path, self.test_dir / DEFAULT_ARCHIVE_NAME)
+
+    def test_move_task_respects_bounds_and_pin_boundary(self):
+        # Setup: tasks[0] is pinned, tasks[1] and tasks[2] are unpinned
+        self.model.tasks = [
+            Task(title="Pinned 1", is_pinned=True),
+            Task(title="Unpinned 1", is_pinned=False),
+            Task(title="Unpinned 2", is_pinned=False),
+        ]
+        # Moving pinned task into unpinned section must fail
+        self.assertFalse(self.model.move_task(0, 1))
+        # Moving unpinned task into pinned section must fail
+        self.assertFalse(self.model.move_task(1, -1))
+        # Moving out of bounds must fail
+        self.assertFalse(self.model.move_task(0, -1))
+        self.assertFalse(self.model.move_task(2, 1))
+        # Valid move within same partition must succeed
+        self.assertTrue(self.model.move_task(1, 1))
+        self.assertEqual(self.model.tasks[1].title, "Unpinned 2")
+        self.assertEqual(self.model.tasks[2].title, "Unpinned 1")
+
+    def test_edit_task_by_index_updates_title_and_rejects_empty(self):
+        # Valid edit
+        self.assertTrue(self.model.edit_task(1, "Updated Title"))
+        self.assertEqual(self.model.tasks[1].title, "Updated Title")
+        # Empty title edit must be rejected
+        self.assertFalse(self.model.edit_task(1, "   "))
+        self.assertEqual(self.model.tasks[1].title, "Updated Title")
+
+    def test_toggle_pin_by_index_repartitions_tasks(self):
+        # Initial: [Pinned(0), Unpinned(1), Unpinned(2)]
+        # Toggle index 1 to pinned
+        self.assertTrue(self.model.toggle_pin(1))
+        self.assertTrue(self.model.tasks[0].is_pinned)
+        self.assertTrue(self.model.tasks[1].is_pinned)
+        self.assertFalse(self.model.tasks[2].is_pinned)
+
+    def test_multiline_task_sanitization_removes_newlines(self):
+        self.assertTrue(self.model.add_task("Multi\nline\r\ntask"))
+        task = self.model.tasks[-1]
+        self.assertNotIn("\n", task.title)
+        self.assertNotIn("\r", task.title)
+        self.assertEqual(task.title, "Multi line task")
+
+    def test_archive_task_saves_project_immediately_without_pending_changes(self):
+        task_title = "Normal task 1"
+        self.assertTrue(self.model.archive_task(task_title))
+        self.assertFalse(self.model.has_unsaved_changes)
+        with open(self.project_path, "r", encoding="utf-8") as f:
+            lines = [line.strip() for line in f if line.strip()]
+        self.assertNotIn(task_title, lines)
+
+    def test_external_modification_detection_and_reload(self):
+        import time
+
+        time.sleep(0.05)
+        with open(self.project_path, "a", encoding="utf-8") as f:
+            f.write("External Notepad Task\n")
+        self.assertTrue(self.model.is_modified_externally())
+        self.assertTrue(self.model.reload_if_modified())
+        titles = [t.title for t in self.model.tasks]
+        self.assertIn("External Notepad Task", titles)
 
 
 class TestSearchEngine(unittest.TestCase):
@@ -187,25 +304,33 @@ class TestSearchEngine(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
-    def test_search_finds_matches_across_projects(self):
+    def test_search_finds_matches_across_multiple_projects(self):
         results = self.engine.search("bug")
         self.assertEqual(len(results), 2)
         tasks = [r["task"] for r in results]
         self.assertTrue(any("authentication" in t for t in tasks))
         self.assertTrue(any("staging" in t for t in tasks))
 
-    def test_search_project_specific(self):
+    def test_search_scoped_to_single_project_filters_other_projects(self):
         results = self.engine.search("bug", project_filename=self.p1)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["filename"], self.p1)
 
-    def test_search_short_query_returns_empty(self):
+    def test_search_short_query_returns_empty_list(self):
         self.assertEqual(self.engine.search("a"), [])
 
-    def test_search_case_sensitive(self):
-        self.assertEqual(len(self.engine.search("Fix", case_sensitive=True)), 1)
-        self.assertEqual(len(self.engine.search("fix", case_sensitive=True)), 1)
-        self.assertEqual(len(self.engine.search("fix", case_sensitive=False)), 2)
+    def test_search_with_case_sensitivity_respects_letter_casing(self):
+        cases = [
+            ("Fix", True, 1),
+            ("fix", True, 1),
+            ("fix", False, 2),
+        ]
+        for query, sensitive, expected_count in cases:
+            with self.subTest(query=query, sensitive=sensitive):
+                self.assertEqual(
+                    len(self.engine.search(query, case_sensitive=sensitive)),
+                    expected_count,
+                )
 
 
 class TestSettingsManager(unittest.TestCase):
@@ -218,15 +343,98 @@ class TestSettingsManager(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
 
-    def test_default_values(self):
+    def test_uninitialized_settings_loads_configured_defaults(self):
         self.assertEqual(self.mgr.get("general", "language"), "en")
         self.assertFalse(self.mgr.get("behavior", "confirm_on_archive"))
 
-    def test_modify_and_persist(self):
+    def test_save_settings_persists_across_new_instance(self):
         self.mgr.set("general", "language", "ar")
         self.mgr.save()
         new_mgr = SettingsManager(self.test_dir)
         self.assertEqual(new_mgr.get("general", "language"), "ar")
+
+
+class TestTranslator(unittest.TestCase):
+    """Verifies standard GNU gettext internationalization catalogs and fallback behavior using real settings."""
+
+    def setUp(self):
+        self.test_dir = Path(tempfile.mkdtemp())
+        self.settings = SettingsManager(self.test_dir)
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_translator_returns_localized_catalog_strings_for_configured_language(self):
+        # Default English
+        tr_en = Translator(self.settings)
+        self.assertEqual(tr_en._("Project Manager"), "Project Manager")
+        self.assertEqual(tr_en._("harvest"), "Today's Harvest")
+        self.assertEqual(tr_en._("settings"), "Settings")
+
+        # Configured Arabic via real SettingsManager and real gettext catalog (Rule 8 compliant: no fake mock)
+        self.settings.set("general", "language", "ar")
+        tr_ar = Translator(self.settings)
+        self.assertEqual(tr_ar._("Project Manager"), "مدير المشاريع")
+        self.assertEqual(tr_ar._("Daily Tasks"), "مهام اليوم")
+        self.assertEqual(tr_ar._("&Save"), "&حفظ")
+        self.assertEqual(tr_ar._("harvest"), "حصاد اليوم")
+
+    def test_get_project_display_name_localizes_daily_tasks(self):
+        self.settings.set("general", "language", "ar")
+        tr_ar = Translator(self.settings)
+        tr_en = Translator(SettingsManager(self.test_dir))
+
+        self.assertEqual(get_project_display_name(DAILY_FILENAME, tr_ar), "مهام اليوم")
+        self.assertEqual(get_project_display_name(DAILY_FILENAME, tr_en), "Daily Tasks")
+        self.assertEqual(get_project_display_name("Project X.txt", tr_ar), "Project X")
+
+    def test_translator_fallback_preserves_untranslated_strings(self):
+        tr = Translator(self.settings)
+        untranslated = "Some Unregistered String 123"
+        self.assertEqual(tr._(untranslated), untranslated)
+
+
+class TestBackupManager(unittest.TestCase):
+    """Verifies snapshot creation, cleanup, and daily task rollover."""
+
+    def setUp(self):
+        self.test_dir = Path(tempfile.mkdtemp())
+        self.projects_dir = self.test_dir / "projects"
+        self.backups_dir = self.test_dir / "backups"
+        self.projects_dir.mkdir(parents=True, exist_ok=True)
+        self.backups_dir.mkdir(parents=True, exist_ok=True)
+        self.settings = SettingsManager(self.test_dir)
+        self.mgr = BackupManager(
+            self.test_dir, self.projects_dir, self.backups_dir, self.settings
+        )
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_create_snapshot_copies_all_project_files(self):
+        p1 = self.projects_dir / "p1.txt"
+        with open(p1, "w", encoding="utf-8") as f:
+            f.write("Task in P1\n")
+        self.assertTrue(self.mgr.create_snapshot("test"))
+        snapshots = list(self.backups_dir.iterdir())
+        self.assertEqual(len(snapshots), 1)
+        self.assertTrue((snapshots[0] / "p1.txt").exists())
+
+    def test_check_and_rollover_daily_tasks_detects_past_date(self):
+        import datetime
+        import os
+
+        daily_path = self.projects_dir / DAILY_FILENAME
+        with open(daily_path, "w", encoding="utf-8") as f:
+            f.write("Yesterday unfinished task\n")
+        past_time = (datetime.datetime.now() - datetime.timedelta(days=2)).timestamp()
+        os.utime(str(daily_path), (past_time, past_time))
+
+        self.assertTrue(self.mgr.check_and_rollover_daily_tasks())
+        daily_arch = self.test_dir / "أرشيف_المهام_اليومية.txt"
+        self.assertTrue(daily_arch.exists())
+        with open(daily_arch, "r", encoding="utf-8") as f:
+            self.assertIn("Yesterday unfinished task", f.read())
 
 
 if __name__ == "__main__":

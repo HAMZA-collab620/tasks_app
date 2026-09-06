@@ -9,23 +9,26 @@ Dar Tasks is a lightweight, cross-platform desktop application designed for effi
 - **Global Search**: Quickly find tasks across all your projects.
 - **Today's Harvest**: Visualize and track your daily achievements.
 - **Archiving System**: Automatically archive completed tasks to maintain a clean workspace.
-- **Tip of the Day**: Get daily productivity tips to enhance your workflow.
-- **Multi-language Support**: Fully localized in English and Arabic.
-- **Dark Mode**: Optimized for a comfortable visual experience with a modern dark theme.
+- **Multi-language Support**: Standard internationalization supporting English and Arabic.
+- **Accessible & Keyboard-First**: Optimized for screen readers (NVDA) with native controls and full keyboard shortcuts.
 - **Single Instance Enforcement**: Ensures only one instance of the app runs at a time.
 
 ## Project Structure
 
-- `tasks_app.py`: Standalone application core incorporating deep domain modules (`ProjectWorkspace`, `SearchEngine`, `ProjectModel`), atomic file management, and native accessible wxPython interface.
-- `CHANGELOG.md`: Chronological log of project milestones and architectural changes.
+- `core_models.py`: Headless domain layer managing tasks, atomic file persistence, search, and workspace invariants.
+- `dialogs.py`: Accessible wxPython modal dialog adapters for Project Management, Global Search, and Settings.
+- `tasks_app.py`: Main desktop presentation frame, tab notebook coordination, and shortcuts engine.
+- `run_tests.py`: Standard automated regression test suite covering domain logic and persistence.
+- `requirements.txt`: Python package dependencies.
+- [CHANGELOG.md](CHANGELOG.md): Chronological log of project milestones and architectural changes.
 - `project_state.md`: Current architecture, deep module boundaries, and status.
 
 ## Installation & Running
 
 ### Prerequisites
 
-- Python 3.x
-- wxPython
+- Python 3.10+
+- Dependencies listed in `requirements.txt`
 
 ### Setup
 
@@ -37,12 +40,17 @@ Dar Tasks is a lightweight, cross-platform desktop application designed for effi
 
 2. Install dependencies:
    ```bash
-   pip install wxPython
+   pip install -r requirements.txt
    ```
 
 3. Run the application:
    ```bash
    python tasks_app.py
+   ```
+
+4. Run tests:
+   ```bash
+   python run_tests.py
    ```
 
 ## Development

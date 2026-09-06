@@ -5,200 +5,205 @@ Delegates all domain persistence and invariants to core_models and dialogs.
 """
 
 from pathlib import Path
-import subprocess
 import sys
 import wx
-
-try:
-    import pyperclip
-except ImportError:
-    pyperclip = None
 
 from core_models import (
     DAILY_FILENAME,
     DAILY_TEMPLATE_FILENAME,
-    DEFAULT_ARCHIVE_NAME,
     BackupManager,
     ProjectModel,
     ProjectWorkspace,
     SearchEngine,
     SettingsManager,
-    Task,
     Translator,
     get_base_dir,
     get_project_display_name,
+    open_file_in_editor,
 )
-from dialogs import (
-    GlobalSearchDialog,
-    ProjectManagerDialog,
-    SettingsDialog,
-)
-
-# ==========================================
-# Presentation Constants & Styling
-# ==========================================
-BG_COLOR = wx.Colour(30, 30, 30)
-FG_COLOR = wx.Colour(240, 240, 240)
-ACCENT_COLOR = wx.Colour(45, 45, 45)
-FONT_SIZE = 14
+from dialogs import GlobalSearchDialog, ProjectManagerDialog, SettingsDialog
 
 
-# ==========================================
-# Task Project Panel (Single Tab Presentation)
-# ==========================================
+def copy_to_clipboard(text: str) -> bool:
+    """Copy text to clipboard using wxPython native Win32 clipboard."""
+    if wx.TheClipboard.Open():
+        try:
+            wx.TheClipboard.SetData(wx.TextDataObject(text))
+            wx.TheClipboard.Flush()
+            return True
+        finally:
+            wx.TheClipboard.Close()
+    return False
+
+
 class TaskProjectPanel(wx.Panel):
     """Panel representing a single project tab with native accessible controls."""
 
-    def __init__(self, parent, filename, settings=None):
+    def __init__(self, parent, filename: str | Path, settings=None):
         super().__init__(parent)
-        self.filename = str(filename)
+        self.filename = Path(filename)
         self.settings = settings
-        self.base_dir = get_base_dir()
-        self.model = ProjectModel(self.filename, self.settings, self.base_dir)
-        self.visible_indices = []
+        self.translator = Translator(self.settings)
+        self.model = ProjectModel(self.filename, self.settings, get_base_dir())
+        self.visible_indices: list[int] = []
 
         sizer = wx.BoxSizer(wx.VERTICAL)
-
-        filter_box = wx.BoxSizer(wx.HORIZONTAL)
-        filter_label = wx.StaticText(self, label="&Filter:")
+        frow = wx.BoxSizer(wx.HORIZONTAL)
+        frow.Add(
+            wx.StaticText(self, label=f"&{self.translator._('filter')}"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            5,
+        )
         self.search_input = wx.TextCtrl(self)
-        self.search_input.Bind(wx.EVT_TEXT, self.on_search)
-        filter_box.Add(filter_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
-        filter_box.Add(self.search_input, 1, wx.EXPAND)
-        sizer.Add(filter_box, 0, wx.EXPAND | wx.ALL, 5)
+        self.search_input.SetName("Filter")
+        self.search_input.Bind(
+            wx.EVT_TEXT, lambda e: self.update_display(self.search_input.GetValue())
+        )
+        frow.Add(self.search_input, 1, wx.EXPAND)
+        sizer.Add(frow, 0, wx.EXPAND | wx.ALL, 5)
 
-        tasks_label = wx.StaticText(self, label="&Tasks:")
+        sizer.Add(
+            wx.StaticText(self, label=f"&{self.translator._('tasks')}"),
+            0,
+            wx.LEFT | wx.TOP,
+            5,
+        )
         self.task_list = wx.ListBox(self, style=wx.LB_SINGLE | wx.LB_NEEDED_SB)
-        self.task_list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self.dispatch_command("archive"))
+        self.task_list.SetName("Tasks")
+        self.task_list.Bind(
+            wx.EVT_LISTBOX_DCLICK, lambda e: self.dispatch_command("archive")
+        )
+        self.task_list.Bind(
+            wx.EVT_KEY_DOWN,
+            lambda e: (
+                self.dispatch_command("archive")
+                if e.GetKeyCode() in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER)
+                else e.Skip()
+            ),
+        )
         self.task_list.Bind(wx.EVT_CONTEXT_MENU, self.on_context_menu)
-        sizer.Add(tasks_label, 0, wx.LEFT | wx.TOP, 5)
         sizer.Add(self.task_list, 1, wx.EXPAND | wx.ALL, 5)
 
-        add_box = wx.BoxSizer(wx.HORIZONTAL)
-        add_label = wx.StaticText(self, label="&Add:")
+        arow = wx.BoxSizer(wx.HORIZONTAL)
+        arow.Add(
+            wx.StaticText(self, label=f"&{self.translator._('add')}"),
+            0,
+            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
+            5,
+        )
         self.new_task_input = wx.TextCtrl(self, style=wx.TE_PROCESS_ENTER)
+        self.new_task_input.SetName("Add Task")
         self.new_task_input.Bind(wx.EVT_TEXT_ENTER, self.on_add_task)
-        add_box.Add(add_label, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 5)
-        add_box.Add(self.new_task_input, 1, wx.EXPAND)
-        sizer.Add(add_box, 0, wx.EXPAND | wx.ALL, 5)
+        arow.Add(self.new_task_input, 1, wx.EXPAND)
+        sizer.Add(arow, 0, wx.EXPAND | wx.ALL, 5)
 
         self.SetSizer(sizer)
-
         if self.model.load_tasks():
             self.update_display()
         self.setup_auto_save()
 
     def on_add_task(self, event=None):
-        new_title = self.new_task_input.GetValue().strip()
-        if self.model.add_task(new_title):
+        if self.model.add_task(self.new_task_input.GetValue().strip()):
             self.new_task_input.Clear()
             self.update_display(self.search_input.GetValue())
 
-    def on_search(self, event=None):
-        self.update_display(self.search_input.GetValue())
-
-    def update_display(self, filter_text=""):
+    def update_display(self, filter_text: str = ""):
         self.task_list.Clear()
         entries = self.model.get_filtered_task_entries(filter_text)
-        lim = self.settings.get("search", "lazy_load_threshold", 100) if self.settings else 100
-        if len(entries) > lim and not filter_text:
-            entries = entries[:lim]
         self.visible_indices = [idx for idx, _ in entries]
-        self.task_list.Set([entry_text for _, entry_text in entries])
+        self.task_list.Set([t for _, t in entries])
         self.Layout()
 
-    def _handle_archive(self, sel, task_text):
-        if self._confirm("Archive task?", "confirm_on_archive", False) and self.model.archive_task(task_text):
-            self.update_display(self.search_input.GetValue())
-            new_sel = min(sel, self.task_list.GetCount() - 1)
-            if new_sel >= 0:
-                self.task_list.SetSelection(new_sel)
-            self.task_list.SetFocus()
+    def _confirm(self, msg_key: str, setting_key: str, default_val: bool) -> bool:
+        if self.settings and not self.settings.get("behavior", setting_key, default_val):
+            return True
+        return (
+            wx.MessageBox(
+                self.translator._(msg_key),
+                self.translator._("settings"),
+                wx.YES_NO | wx.ICON_QUESTION,
+            )
+            == wx.YES
+        )
 
-    def _handle_delete(self, sel, task_text):
-        if self._confirm("Delete task?", "confirm_on_delete", True) and self.model.delete_task(task_text):
-            self.update_display(self.search_input.GetValue())
-            new_sel = min(sel, self.task_list.GetCount() - 1)
-            if new_sel >= 0:
-                self.task_list.SetSelection(new_sel)
-            self.task_list.SetFocus()
+    def _adjust_selection_after_removal(self, sel: int):
+        new_sel = min(sel, self.task_list.GetCount() - 1)
+        if new_sel >= 0:
+            self.task_list.SetSelection(new_sel)
 
-    def _handle_edit(self, sel, task_text):
-        dlg = wx.TextEntryDialog(self, "Edit task:", "Edit", task_text)
-        if dlg.ShowModal() == wx.ID_OK and self.model.edit_task(task_text, dlg.GetValue().strip()):
+    def _handle_archive_command(self, m_idx: int, sel: int):
+        if self._confirm("confirm_archive", "confirm_on_archive", False):
+            if self.model.archive_task(m_idx):
+                self.update_display(self.search_input.GetValue())
+                self._adjust_selection_after_removal(sel)
+
+    def _handle_delete_command(self, m_idx: int, sel: int):
+        if self._confirm("confirm_delete", "confirm_on_delete", True):
+            if self.model.delete_task(m_idx):
+                self.update_display(self.search_input.GetValue())
+                self._adjust_selection_after_removal(sel)
+
+    def _handle_edit_command(self, m_idx: int, sel: int, task_text: str):
+        prompt = self.translator._("edit_task")
+        dlg = wx.TextEntryDialog(self, prompt, prompt, task_text)
+        if dlg.ShowModal() == wx.ID_OK and self.model.edit_task(
+            m_idx, dlg.GetValue().strip()
+        ):
             self.update_display(self.search_input.GetValue())
             self.task_list.SetSelection(sel)
         dlg.Destroy()
-        self.task_list.SetFocus()
 
-    def _handle_copy(self, task_text):
-        if pyperclip:
-            pyperclip.copy(task_text)
-        self.task_list.SetFocus()
-
-    def _handle_pin(self, sel, task_text):
-        if self.model.toggle_pin(task_text):
+    def _handle_pin_command(self, m_idx: int, sel: int):
+        task = self.model.tasks[m_idx]
+        if self.model.toggle_pin(m_idx):
             self.update_display(self.search_input.GetValue())
-            self.task_list.SetSelection(sel)
-        self.task_list.SetFocus()
+            try:
+                new_idx = self.model.tasks.index(task)
+                if new_idx in self.visible_indices:
+                    self.task_list.SetSelection(self.visible_indices.index(new_idx))
+            except (ValueError, IndexError):
+                self.task_list.SetSelection(sel)
 
-    def _handle_move(self, sel, direction):
+    def _handle_move_command(self, m_idx: int, sel: int, direction: int):
         if 0 <= sel + direction < len(self.visible_indices):
-            model_idx = self.visible_indices[sel]
-            if self.model.move_task(model_idx, direction):
+            if self.model.move_task(m_idx, direction):
                 self.update_display(self.search_input.GetValue())
-                target_idx = model_idx + direction
-                if target_idx in self.visible_indices:
-                    self.task_list.SetSelection(self.visible_indices.index(target_idx))
-        self.task_list.SetFocus()
+                tgt = m_idx + direction
+                if tgt in self.visible_indices:
+                    self.task_list.SetSelection(self.visible_indices.index(tgt))
 
-    def dispatch_command(self, cmd):
+    def _handle_undo_command(self):
+        if self.model.undo():
+            self.update_display(self.search_input.GetValue())
+
+    def dispatch_command(self, cmd: str):
         if cmd == "add":
-            self.on_add_task()
-            return
+            return self.on_add_task()
         if cmd == "undo":
-            if self.model.undo():
-                self.update_display(self.search_input.GetValue())
-            return
+            return self._handle_undo_command()
+        if cmd == "open_notepad":
+            return open_file_in_editor(self.filename)
 
         sel = self.task_list.GetSelection()
-        if sel == wx.NOT_FOUND:
+        if sel == wx.NOT_FOUND or sel >= len(self.visible_indices):
             return
-        task_text = self.task_list.GetString(sel)
+        m_idx, task_text = self.visible_indices[sel], self.task_list.GetString(sel)
 
         handlers = {
-            "archive": lambda: self._handle_archive(sel, task_text),
-            "complete": lambda: self._handle_archive(sel, task_text),
-            "delete": lambda: self._handle_delete(sel, task_text),
-            "edit": lambda: self._handle_edit(sel, task_text),
-            "copy": lambda: self._handle_copy(task_text),
-            "pin": lambda: self._handle_pin(sel, task_text),
-            "move_up": lambda: self._handle_move(sel, -1),
-            "move_down": lambda: self._handle_move(sel, 1),
+            "archive": lambda: self._handle_archive_command(m_idx, sel),
+            "complete": lambda: self._handle_archive_command(m_idx, sel),
+            "delete": lambda: self._handle_delete_command(m_idx, sel),
+            "edit": lambda: self._handle_edit_command(m_idx, sel, task_text),
+            "copy": lambda: copy_to_clipboard(task_text),
+            "pin": lambda: self._handle_pin_command(m_idx, sel),
+            "move_up": lambda: self._handle_move_command(m_idx, sel, -1),
+            "move_down": lambda: self._handle_move_command(m_idx, sel, 1),
         }
-        action = handlers.get(cmd)
-        if action:
-            action()
-
-    def _confirm(self, msg, key, default):
-        if self.settings and not self.settings.get("behavior", key, default):
-            return True
-        return wx.MessageBox(msg, "Confirm", wx.YES_NO | wx.ICON_QUESTION) == wx.YES
-
-    def archive_task(self, task_text):
-        idx = self.task_list.FindString(task_text)
-        if idx != wx.NOT_FOUND:
-            self.task_list.SetSelection(idx)
-            self.dispatch_command("archive")
-
-    def delete_task_final(self, task_text):
-        idx = self.task_list.FindString(task_text)
-        if idx != wx.NOT_FOUND:
-            self.task_list.SetSelection(idx)
-            self.dispatch_command("delete")
-
-    def undo(self):
-        self.dispatch_command("undo")
+        handler = handlers.get(cmd)
+        if handler:
+            handler()
+        self.task_list.SetFocus()
 
     def on_context_menu(self, event):
         pos = event.GetPosition()
@@ -209,11 +214,12 @@ class TaskProjectPanel(wx.Panel):
         if self.task_list.GetSelection() != wx.NOT_FOUND:
             menu = wx.Menu()
             for lbl, cmd in [
-                ("Mark Complete (Ctrl+M)", "complete"),
-                ("Pin ⭐", "pin"),
-                ("Edit (F2)", "edit"),
-                ("Copy (Ctrl+C)", "copy"),
-                ("Delete (Del)", "delete"),
+                (self.translator._("Mark Complete (Ctrl+M)"), "complete"),
+                (self.translator._("Pin ⭐"), "pin"),
+                (self.translator._("Edit (F2)"), "edit"),
+                (self.translator._("Copy (Ctrl+C)"), "copy"),
+                (self.translator._("Delete (Del)"), "delete"),
+                (self.translator._("Open in Notepad (F4)"), "open_notepad"),
             ]:
                 mi = menu.Append(wx.ID_ANY, lbl)
                 self.Bind(wx.EVT_MENU, lambda e, c=cmd: self.dispatch_command(c), mi)
@@ -221,11 +227,19 @@ class TaskProjectPanel(wx.Panel):
             menu.Destroy()
 
     def setup_auto_save(self):
-        interval = self.settings.get("behavior", "auto_save_interval", 2) if self.settings else 2
+        interval = (
+            self.settings.get("behavior", "auto_save_interval", 2)
+            if self.settings
+            else 2
+        )
         self.timer = wx.Timer(self)
         self.Bind(
             wx.EVT_TIMER,
-            lambda e: self.model.save_tasks_atomic() if self.model.has_unsaved_changes else None,
+            lambda e: (
+                self.model.save_tasks_atomic()
+                if self.model.has_unsaved_changes
+                else None
+            ),
             self.timer,
         )
         self.Bind(
@@ -235,17 +249,16 @@ class TaskProjectPanel(wx.Panel):
         self.timer.Start(interval * 1000)
 
 
-# ==========================================
-# Main Application Frame
-# ==========================================
 class MainFrame(wx.Frame):
     """Main window coordinating project tabs, shortcuts, and global toolbar."""
 
     def __init__(self):
         super().__init__(None, title="Dar Tasks", size=(800, 600))
         self.base_dir = get_base_dir()
-        self.projects_dir = self.base_dir / "projects"
-        self.backups_dir = self.base_dir / "backups"
+        self.projects_dir, self.backups_dir = (
+            self.base_dir / "projects",
+            self.base_dir / "backups",
+        )
         self.projects_dir.mkdir(parents=True, exist_ok=True)
         self.backups_dir.mkdir(parents=True, exist_ok=True)
 
@@ -253,22 +266,36 @@ class MainFrame(wx.Frame):
         self.search_engine = SearchEngine(self.workspace)
         self.settings = SettingsManager(self.base_dir)
         self.translator = Translator(self.settings)
-        self.backup_mgr = BackupManager(self.base_dir, self.projects_dir, self.backups_dir, self.settings)
+        self.backup_mgr = BackupManager(
+            self.base_dir, self.projects_dir, self.backups_dir, self.settings
+        )
         self.backup_mgr.setup_daily_tasks()
 
         self.panel = wx.Panel(self)
         sizer = wx.BoxSizer(wx.VERTICAL)
 
         self.toolbar_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        for key, mnemonic, handler in [
-            ("proj_mgr", "P", lambda e: self.on_project_manager()),
-            ("search", "S", lambda e: self.on_global_search()),
+        tools = [
+            (
+                "proj_mgr",
+                "P",
+                lambda e: self._show_dialog(ProjectManagerDialog, self.workspace),
+            ),
+            (
+                "search",
+                "S",
+                lambda e: self._show_dialog(
+                    GlobalSearchDialog, self.search_engine, self.settings
+                ),
+            ),
+            ("open_notepad", "N", lambda e: self.on_open_active_project_in_notepad()),
             ("harvest", "H", lambda e: self.on_harvest()),
             ("open_arch", "O", lambda e: self.on_open_archive()),
             ("settings", "T", lambda e: self.on_settings()),
-        ]:
+        ]
+        for key, mnem, handler in tools:
             btn = wx.Button(self.panel, label=f"&{self.translator._(key)}")
-            btn.SetToolTip(f"{self.translator._(key)} (Alt+{mnemonic})")
+            btn.SetToolTip(f"{self.translator._(key)} (Alt+{mnem})")
             btn.Bind(wx.EVT_BUTTON, handler)
             self.toolbar_sizer.Add(btn, 0, wx.ALL, 3)
         sizer.Add(self.toolbar_sizer, 0, wx.EXPAND | wx.ALL, 5)
@@ -280,50 +307,124 @@ class MainFrame(wx.Frame):
         self.setup_accelerators()
         self.load_all_projects()
 
+        self.Bind(wx.EVT_ACTIVATE, self.on_activate)
         self.Bind(wx.EVT_CLOSE, self.on_close)
         self.Show()
 
-    def open_or_select_project(self, filename: str):
+    def _show_dialog(self, dlg_cls, *args):
+        dlg = dlg_cls(self, *args)
+        res = dlg.ShowModal()
+        dlg.Destroy()
+        return res
+
+    def on_activate(self, event):
+        if event.GetActive():
+            if self.backup_mgr.check_and_rollover_daily_tasks():
+                self.reload_daily_tab()
+            for i in range(self.notebook.GetPageCount()):
+                page = self.notebook.GetPage(i)
+                if isinstance(page, TaskProjectPanel) and page.model.reload_if_modified():
+                    page.update_display(page.search_input.GetValue())
+        event.Skip()
+
+    def reload_daily_tab(self):
         for i in range(self.notebook.GetPageCount()):
             page = self.notebook.GetPage(i)
-            if getattr(page, "filename", "").endswith(filename):
+            if (
+                isinstance(page, TaskProjectPanel)
+                and page.filename.name == DAILY_FILENAME
+            ):
+                page.model.load_tasks()
+                page.update_display(page.search_input.GetValue())
+
+    def on_open_active_project_in_notepad(self):
+        page = self.notebook.GetCurrentPage()
+        if isinstance(page, TaskProjectPanel):
+            open_file_in_editor(page.filename)
+
+    def open_or_select_project(self, filename: str):
+        target = self.workspace.get_project_path(filename).resolve()
+        for i in range(self.notebook.GetPageCount()):
+            page = self.notebook.GetPage(i)
+            if isinstance(page, TaskProjectPanel) and page.filename.resolve() == target:
                 self.notebook.SetSelection(i)
                 return
         path = self.workspace.get_project_path(filename)
         if path.exists():
-            title = get_project_display_name(filename, self.translator)
-            self.notebook.AddPage(TaskProjectPanel(self.notebook, path, self.settings), title)
+            self.notebook.AddPage(
+                TaskProjectPanel(self.notebook, path, self.settings),
+                get_project_display_name(filename, self.translator),
+            )
             self.notebook.SetSelection(self.notebook.GetPageCount() - 1)
 
+    def on_project_renamed(self, old_fn: str, new_fn: str):
+        old_p = self.workspace.get_project_path(old_fn).resolve()
+        new_p = self.workspace.get_project_path(new_fn)
+        for i in range(self.notebook.GetPageCount()):
+            page = self.notebook.GetPage(i)
+            if isinstance(page, TaskProjectPanel) and page.filename.resolve() == old_p:
+                page.filename, page.model.filename = new_p, new_p
+                self.notebook.SetPageText(
+                    i, get_project_display_name(new_fn, self.translator)
+                )
+                break
+
+    def on_project_deleted(self, filename: str):
+        p_path = self.workspace.get_project_path(filename).resolve()
+        for i in range(self.notebook.GetPageCount()):
+            page = self.notebook.GetPage(i)
+            if isinstance(page, TaskProjectPanel) and page.filename.resolve() == p_path:
+                page.model.has_unsaved_changes = False
+                page.timer.Stop()
+                self.notebook.DeletePage(i)
+                break
+
     def load_all_projects(self):
-        projects = self.workspace.list_projects()
-        for p in projects:
-            if p["filename"] == DAILY_TEMPLATE_FILENAME:
-                continue
-            title = get_project_display_name(p["filename"], self.translator)
-            self.notebook.AddPage(TaskProjectPanel(self.notebook, p["path"], self.settings), title)
+        for proj in self.workspace.list_projects():
+            if proj["filename"] != DAILY_TEMPLATE_FILENAME:
+                self.notebook.AddPage(
+                    TaskProjectPanel(self.notebook, proj["path"], self.settings),
+                    get_project_display_name(proj["filename"], self.translator),
+                )
 
     def setup_accelerators(self):
-        shortcuts = [
-            (wx.ACCEL_CTRL, wx.WXK_UP, 1001, "move_up"),
-            (wx.ACCEL_CTRL, wx.WXK_DOWN, 1002, "move_down"),
-            (wx.ACCEL_NORMAL, wx.WXK_DELETE, 1003, "delete"),
-            (wx.ACCEL_NORMAL, wx.WXK_F2, 1004, "edit"),
-            (wx.ACCEL_CTRL, ord("Z"), 1005, "undo"),
-            (wx.ACCEL_CTRL, ord("M"), 1009, "complete"),
-            (wx.ACCEL_CTRL, wx.WXK_TAB, 1006, "next_tab"),
-            (wx.ACCEL_CTRL, ord("C"), 1007, "copy"),
-            (wx.ACCEL_CTRL, ord("F"), 1008, "search"),
+        accels = [
+            (wx.ACCEL_CTRL, wx.WXK_UP, 1001),
+            (wx.ACCEL_CTRL, wx.WXK_DOWN, 1002),
+            (wx.ACCEL_NORMAL, wx.WXK_DELETE, 1003),
+            (wx.ACCEL_NORMAL, wx.WXK_F2, 1004),
+            (wx.ACCEL_CTRL, ord("Z"), 1005),
+            (wx.ACCEL_CTRL, ord("M"), 1009),
+            (wx.ACCEL_CTRL, wx.WXK_TAB, 1006),
+            (wx.ACCEL_CTRL, ord("C"), 1007),
+            (wx.ACCEL_CTRL, ord("F"), 1008),
+            (wx.ACCEL_NORMAL, wx.WXK_F4, 1010),
         ]
-        accels = []
-        for flags, key, uid, cmd in shortcuts:
-            accels.append((flags, key, uid))
-            if cmd == "next_tab":
-                self.Bind(wx.EVT_MENU, lambda e: self.next_tab(), id=uid)
-            elif cmd == "search":
-                self.Bind(wx.EVT_MENU, lambda e: self.on_global_search(), id=uid)
-            else:
-                self.Bind(wx.EVT_MENU, lambda e, c=cmd: self.dispatch_to_active_tab(c), id=uid)
+        cmd_map = {
+            1001: "move_up",
+            1002: "move_down",
+            1003: "delete",
+            1004: "edit",
+            1005: "undo",
+            1009: "complete",
+            1007: "copy",
+        }
+        for uid, cmd in cmd_map.items():
+            self.Bind(
+                wx.EVT_MENU, lambda e, c=cmd: self.dispatch_to_active_tab(c), id=uid
+            )
+        self.Bind(wx.EVT_MENU, lambda e: self.next_tab(), id=1006)
+        self.Bind(
+            wx.EVT_MENU,
+            lambda e: self._show_dialog(
+                GlobalSearchDialog, self.search_engine, self.settings
+            ),
+            id=1008,
+        )
+        self.Bind(
+            wx.EVT_MENU, lambda e: self.on_open_active_project_in_notepad(), id=1010
+        )
+
         for i in range(1, 10):
             uid = 1100 + i
             accels.append((wx.ACCEL_CTRL, ord(str(i)), uid))
@@ -341,42 +442,29 @@ class MainFrame(wx.Frame):
             wx.CallAfter(self.notebook.GetCurrentPage().task_list.SetFocus)
 
     def next_tab(self):
-        cnt = self.notebook.GetPageCount()
-        if cnt > 0:
-            self.select_tab((self.notebook.GetSelection() + 1) % cnt)
-
-    def on_project_manager(self):
-        dlg = ProjectManagerDialog(self, self.workspace)
-        dlg.ShowModal()
-        dlg.Destroy()
-
-    def on_global_search(self):
-        dlg = GlobalSearchDialog(self, self.search_engine, self.settings)
-        dlg.ShowModal()
-        dlg.Destroy()
+        if self.notebook.GetPageCount() > 0:
+            self.select_tab(
+                (self.notebook.GetSelection() + 1) % self.notebook.GetPageCount()
+            )
 
     def on_harvest(self):
         done = ProjectModel.get_today_harvest(self.base_dir, self.settings)
-        message = "\n".join(done) if done else self.translator._("no_harvest")
-        wx.MessageBox(message, self.translator._("arch_title"), wx.OK)
+        wx.MessageBox(
+            "\n".join(done) if done else self.translator._("no_harvest"),
+            self.translator._("arch_title"),
+            wx.OK,
+        )
 
     def on_open_archive(self):
-        arch_setting = self.settings.get("backup", "archive_location") if self.settings else ""
-        arch = Path(arch_setting) if arch_setting else self.base_dir / DEFAULT_ARCHIVE_NAME
+        arch = ProjectModel.get_archive_path(self.base_dir, self.settings)
         if arch.exists():
-            if sys.platform == "win32":
-                import os
-                os.startfile(str(arch))
-            else:
-                subprocess.Popen(["xdg-open", str(arch)])
+            open_file_in_editor(arch)
         else:
             wx.MessageBox(self.translator._("no_arch"), "Info", wx.OK)
 
     def on_settings(self):
-        dlg = SettingsDialog(self, self.settings)
-        if dlg.ShowModal() == wx.ID_OK:
+        if self._show_dialog(SettingsDialog, self.settings) == wx.ID_OK:
             self.translator.setup_translations()
-        dlg.Destroy()
 
     def on_close(self, event):
         for i in range(self.notebook.GetPageCount()):
@@ -386,13 +474,9 @@ class MainFrame(wx.Frame):
         event.Skip()
 
 
-# ==========================================
-# Application Entry Point
-# ==========================================
 if __name__ == "__main__":
     app = wx.App()
-    name = f"DarTasks-{wx.GetUserId()}"
-    instance_checker = wx.SingleInstanceChecker(name)
+    instance_checker = wx.SingleInstanceChecker(f"DarTasks-{wx.GetUserId()}")
     if instance_checker.IsAnotherRunning():
         wx.MessageBox(
             "An instance of Dar Tasks is already running.",
@@ -400,6 +484,5 @@ if __name__ == "__main__":
             wx.OK | wx.ICON_ERROR,
         )
         sys.exit(0)
-
     MainFrame()
     app.MainLoop()
