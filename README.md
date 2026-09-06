@@ -16,10 +16,9 @@ Dar Tasks is a lightweight, cross-platform desktop application designed for effi
 
 ## Project Structure
 
-- `tasks_app.py`: Main entry point of the application.
-- `dar_tasks/`: Core package containing UI components, managers, and utilities.
-- `tests/`: Unit tests for ensuring application logic and model integrity.
-- `dist/`: Directory for logs, backups, and project data.
+- `tasks_app.py`: Standalone application core incorporating deep domain modules (`ProjectWorkspace`, `SearchEngine`, `ProjectModel`), atomic file management, and native accessible wxPython interface.
+- `CHANGELOG.md`: Chronological log of project milestones and architectural changes.
+- `project_state.md`: Current architecture, deep module boundaries, and status.
 
 ## Installation & Running
 
@@ -48,8 +47,16 @@ Dar Tasks is a lightweight, cross-platform desktop application designed for effi
 
 ## Development
 
-- **Build**: The application can be packaged into an executable using the provided `tasks_app.spec` file with PyInstaller.
-- **Tests**: Run the test suite located in the `tests/` directory to verify core functionality.
+- **Build**: The application can be packaged into an executable using the provided `tasks_app.spec` file with PyInstaller:
+  ```bash
+  pyinstaller tasks_app.spec
+  ```
+
+## Developer
+
+- **Name:** Kamal Yaser (كمال ياسر)
+- **Email:** kamalyaser31@gmail.com
+- **Telegram:** [@kamalyaser31](https://t.me/kamalyaser31)
 
 ## License
 

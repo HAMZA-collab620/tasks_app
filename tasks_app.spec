@@ -5,7 +5,7 @@ a = Analysis(
     ['tasks_app.py'],
     pathex=[],
     binaries=[],
-    datas=[('dar_tasks/*.json', 'dar_tasks')],
+    datas=[],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
