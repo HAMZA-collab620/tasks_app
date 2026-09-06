@@ -1,6 +1,7 @@
 # Changelog
 
 ## [2026-09-06]
+- build(exe): compile standalone single-file windowed executable via PyInstaller with bundled gettext locales and excluded unused modules.
 - refactor(i18n-dispatch): adopt standard GNU gettext with locales catalog, decompose dispatch_command into focused handlers, decouple list_projects presentation leakage, purge dead reorder_project, and expand test suite to 37 passing tests.
 - refactor(compression): radically compress codebase by ~390 lines across dialogs, tasks_app, and core_models, eliminate UI boilerplate, unify open_file_in_editor, pass black and flake8 with zero warnings, and maintain 100% test suite passage (34 tests).
 - refactor(minimalist): purge pyperclip for native clipboard, resolve screen-reader pin focus displacement bug, introduce direct Notepad integration (F4), unify synchronous atomic persistence, and expand test suite to 34 passing tests.

@@ -121,8 +121,16 @@ class Translator:
 
     def __init__(self, settings=None, base_dir=None):
         self.settings = settings
-        self.base_dir = Path(base_dir) if base_dir else get_base_dir()
-        self.locales_dir = self.base_dir / "locales"
+        if base_dir:
+            self.base_dir = Path(base_dir)
+            self.locales_dir = self.base_dir / "locales"
+        else:
+            self.base_dir = get_base_dir()
+            meipass = getattr(sys, "_MEIPASS", None)
+            if meipass and (Path(meipass) / "locales").exists():
+                self.locales_dir = Path(meipass) / "locales"
+            else:
+                self.locales_dir = self.base_dir / "locales"
         self.lang = "en"
         self.translation = None
         self.setup_translations()
