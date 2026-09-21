@@ -641,6 +641,22 @@ class TestPySide6MainWindow(unittest.TestCase):
 
     def tearDown(self):
         shutil.rmtree(self.test_dir, ignore_errors=True)
+        root_trash = Path(__file__).parent / "trash.txt"
+        if root_trash.exists():
+            try:
+                root_trash.unlink()
+            except OSError:
+                pass
+
+    def create_task_widget(self, filename=None):
+        from tasks_app import TaskProjectWidget
+
+        path = filename or self.p1_path
+        widget = TaskProjectWidget(None, path, self.settings)
+        widget.model.base_dir = self.test_dir
+        widget.model.archive_file = self.test_dir / "archive.txt"
+        widget.model.trash_file = self.test_dir / "trash.txt"
+        return widget
 
     def test_copy_to_clipboard(self):
         from tasks_app import copy_to_clipboard
@@ -651,9 +667,7 @@ class TestPySide6MainWindow(unittest.TestCase):
         self.assertEqual(QGuiApplication.clipboard().text(), "test clipboard text")
 
     def test_task_project_widget_instantiation_and_accessibility(self):
-        from tasks_app import TaskProjectWidget
-
-        widget = TaskProjectWidget(None, self.p1_path, self.settings)
+        widget = self.create_task_widget()
         self.assertEqual(widget.search_input.accessibleName(), "Filter")
         self.assertEqual(widget.task_list.accessibleName(), "Tasks")
         self.assertEqual(widget.new_task_input.accessibleName(), "Add Task")
@@ -661,9 +675,7 @@ class TestPySide6MainWindow(unittest.TestCase):
         widget.timer.stop()
 
     def test_task_project_widget_add_and_filter(self):
-        from tasks_app import TaskProjectWidget
-
-        widget = TaskProjectWidget(None, self.p1_path, self.settings)
+        widget = self.create_task_widget()
         widget.new_task_input.setText("Brand new item")
         widget.on_add_task()
         self.assertEqual(widget.new_task_input.text(), "")
@@ -674,10 +686,105 @@ class TestPySide6MainWindow(unittest.TestCase):
         self.assertEqual(widget.task_list.count(), 1)
         widget.timer.stop()
 
-    def test_task_project_widget_commands(self):
-        from tasks_app import TaskProjectWidget
+    def test_task_project_widget_add_task_validation(self):
+        from PySide6.QtCore import Qt, QEvent
+        from PySide6.QtGui import QKeyEvent
 
-        widget = TaskProjectWidget(None, self.p1_path, self.settings)
+        widget = self.create_task_widget()
+        initial_count = widget.task_list.count()
+
+        # Whitespace-only task input must be rejected without altering count
+        widget.new_task_input.setText("   ")
+        widget.on_add_task()
+        self.assertEqual(widget.task_list.count(), initial_count)
+        self.assertEqual(widget.new_task_input.text(), "   ")
+
+        # Valid task input via returnPressed signal
+        widget.new_task_input.setText("Valid task via enter")
+        widget.new_task_input.returnPressed.emit()
+        self.assertEqual(widget.task_list.count(), initial_count + 1)
+        self.assertEqual(widget.new_task_input.text(), "")
+
+        # Test AccessibleTaskListWidget keyPressEvent for Return/Enter
+        activated = []
+        widget.task_list.on_activate = lambda: activated.append(True)
+        ret_event = QKeyEvent(
+            QEvent.Type.KeyPress, Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier
+        )
+        widget.task_list.keyPressEvent(ret_event)
+        self.assertTrue(activated)
+
+        # Other keys delegate to base list without triggering activate
+        activated.clear()
+        space_event = QKeyEvent(
+            QEvent.Type.KeyPress, Qt.Key.Key_Space, Qt.KeyboardModifier.NoModifier
+        )
+        widget.task_list.keyPressEvent(space_event)
+        self.assertFalse(activated)
+        widget.timer.stop()
+
+    def test_task_project_widget_search_and_filter_behavior(self):
+        widget = self.create_task_widget()
+        self.assertEqual(widget.task_list.count(), 3)
+        self.assertEqual(len(widget.visible_indices), 3)
+
+        # Filter by substring (case-insensitive) via textChanged
+        widget.search_input.setText("task 1")
+        self.assertEqual(widget.task_list.count(), 1)
+        self.assertEqual(len(widget.visible_indices), 1)
+        self.assertIn("Task 1", widget.task_list.item(0).text())
+
+        # Filter with non-matching substring yields empty list
+        widget.search_input.setText("nonexistent query 123")
+        self.assertEqual(widget.task_list.count(), 0)
+        self.assertEqual(widget.visible_indices, [])
+
+        # Clearing filter restores all tasks
+        widget.search_input.setText("")
+        self.assertEqual(widget.task_list.count(), 3)
+        self.assertEqual(len(widget.visible_indices), 3)
+        widget.timer.stop()
+
+    def test_task_project_widget_context_menu_actions(self):
+        from PySide6.QtCore import QPoint
+        from PySide6.QtGui import QGuiApplication
+        from PySide6.QtWidgets import QMenu
+
+        widget = self.create_task_widget()
+        menu = QMenu(widget)
+        widget._populate_context_menu(menu)
+        actions = menu.actions()
+        self.assertEqual(len(actions), 6)
+
+        # Verify all expected action texts
+        action_texts = [a.text() for a in actions]
+        self.assertTrue(any("Complete" in t for t in action_texts))
+        self.assertTrue(any("Pin" in t for t in action_texts))
+        self.assertTrue(any("Edit" in t for t in action_texts))
+        self.assertTrue(any("Copy" in t for t in action_texts))
+        self.assertTrue(any("Delete" in t for t in action_texts))
+        self.assertTrue(any("Notepad" in t for t in action_texts))
+
+        # Select row 1 ('Task 1') and trigger Pin action
+        widget.task_list.setCurrentRow(1)
+        pin_action = next(a for a in actions if "Pin" in a.text())
+        pin_action.trigger()
+        self.assertTrue(widget.task_list.currentItem().text().startswith("⭐"))
+
+        # Select item and trigger Copy action
+        copy_action = next(a for a in actions if "Copy" in a.text())
+        copy_action.trigger()
+        self.assertEqual(
+            QGuiApplication.clipboard().text(), widget.task_list.currentItem().text()
+        )
+
+        # Context menu call with invalid selection/coordinates is safe no-op
+        widget.task_list.setCurrentRow(-1)
+        widget.on_context_menu(QPoint(-100, -100))
+        widget.timer.stop()
+
+    def test_task_project_widget_commands(self):
+        widget = self.create_task_widget()
         # Row 0 is '⭐ Task 2' (already pinned), row 1 is 'Task 1' (unpinned)
         widget.task_list.setCurrentRow(1)
         widget.dispatch_command("pin")
@@ -692,6 +799,107 @@ class TestPySide6MainWindow(unittest.TestCase):
         widget.task_list.setCurrentRow(0)
         widget.dispatch_command("complete")
         self.assertEqual(widget.task_list.count(), 2)
+        widget.timer.stop()
+
+    def test_task_project_widget_command_complete_and_undo(self):
+        self.settings.set("behavior", "confirm_on_archive", False)
+        widget = self.create_task_widget()
+        initial_count = widget.task_list.count()
+        target_text = widget.task_list.item(0).text()
+
+        # Archive/Complete first item
+        widget.task_list.setCurrentRow(0)
+        widget.dispatch_command("complete")
+        self.assertEqual(widget.task_list.count(), initial_count - 1)
+        cur_titles = [
+            widget.task_list.item(i).text() for i in range(widget.task_list.count())
+        ]
+        self.assertNotIn(target_text, cur_titles)
+
+        # Undo restores the archived task
+        widget.dispatch_command("undo")
+        self.assertEqual(widget.task_list.count(), initial_count)
+        restored_titles = [
+            widget.task_list.item(i).text() for i in range(widget.task_list.count())
+        ]
+        self.assertIn(target_text, restored_titles)
+        widget.timer.stop()
+
+    def test_task_project_widget_command_pin_and_reselection(self):
+        widget = self.create_task_widget()
+        self.assertTrue(widget.task_list.item(0).text().startswith("⭐"))
+        self.assertFalse(widget.task_list.item(1).text().startswith("⭐"))
+
+        # Pin row 1 ('Task 1') -> pins and stays selected
+        widget.task_list.setCurrentRow(1)
+        widget.dispatch_command("pin")
+        cur_item = widget.task_list.currentItem()
+        self.assertIsNotNone(cur_item)
+        self.assertTrue(cur_item.text().startswith("⭐"))
+        self.assertIn("Task 1", cur_item.text())
+
+        # Unpin row 0 -> becomes unpinned
+        widget.task_list.setCurrentRow(0)
+        unpinned_title = widget.task_list.item(0).text().replace("⭐ ", "")
+        widget.dispatch_command("pin")
+        titles = [
+            widget.task_list.item(i).text() for i in range(widget.task_list.count())
+        ]
+        self.assertIn(unpinned_title, titles)
+        widget.timer.stop()
+
+    def test_task_project_widget_command_delete_and_boundaries(self):
+        self.settings.set("behavior", "confirm_on_delete", False)
+        widget = self.create_task_widget()
+        initial_count = widget.task_list.count()
+
+        # Delete selected item
+        widget.task_list.setCurrentRow(0)
+        widget.dispatch_command("delete")
+        self.assertEqual(widget.task_list.count(), initial_count - 1)
+
+        # Out-of-bounds selection is safe no-op
+        widget.task_list.setCurrentRow(-1)
+        widget.dispatch_command("delete")
+        widget.dispatch_command("pin")
+        widget.dispatch_command("move_up")
+        self.assertEqual(widget.task_list.count(), initial_count - 1)
+
+        # Unknown command is safe no-op
+        widget.task_list.setCurrentRow(0)
+        widget.dispatch_command("unknown_command_xyz")
+
+        # Boundary movement: top pinned item move_up fails safely
+        widget.task_list.setCurrentRow(0)
+        widget.dispatch_command("move_up")
+        widget.timer.stop()
+
+    def test_task_project_widget_edit_and_auto_save(self):
+        from PySide6.QtWidgets import QInputDialog
+
+        widget = self.create_task_widget()
+        widget.task_list.setCurrentRow(0)
+
+        # Edit task with mocked QInputDialog.getText
+        orig_getText = QInputDialog.getText
+        try:
+            QInputDialog.getText = staticmethod(
+                lambda *a, **kw: ("Edited Task Content", True)
+            )
+            widget.dispatch_command("edit")
+            self.assertIn("Edited Task Content", widget.task_list.item(0).text())
+
+            # Canceled edit leaves content unchanged
+            QInputDialog.getText = staticmethod(lambda *a, **kw: ("", False))
+            widget.dispatch_command("edit")
+            self.assertIn("Edited Task Content", widget.task_list.item(0).text())
+        finally:
+            QInputDialog.getText = orig_getText
+
+        # Auto-save tick saves dirty model
+        widget.model.has_unsaved_changes = True
+        widget._on_auto_save_tick()
+        self.assertFalse(widget.model.has_unsaved_changes)
         widget.timer.stop()
 
     def test_main_window_instantiation_and_tabs(self):
@@ -722,6 +930,41 @@ class TestPySide6MainWindow(unittest.TestCase):
         self.assertEqual(win.notebook.count(), initial_count)
         win.close()
 
+    def test_main_window_tab_switching_comprehensive(self):
+        from tasks_app import MainWindow
+
+        win = MainWindow(base_dir=self.test_dir)
+        p2 = win.workspace.create_project("Project Beta")
+        p3 = win.workspace.create_project("Project Gamma")
+        win.open_or_select_project(p2)
+        win.open_or_select_project(p3)
+        total_tabs = win.notebook.count()
+        self.assertGreaterEqual(total_tabs, 3)
+
+        # select_tab within bounds
+        win.select_tab(1)
+        self.assertEqual(win.notebook.currentIndex(), 1)
+
+        # select_tab out of bounds is ignored
+        win.select_tab(-1)
+        self.assertEqual(win.notebook.currentIndex(), 1)
+        win.select_tab(999)
+        self.assertEqual(win.notebook.currentIndex(), 1)
+
+        # next_tab wraps around to 0
+        win.select_tab(total_tabs - 1)
+        win.next_tab()
+        self.assertEqual(win.notebook.currentIndex(), 0)
+
+        # open_or_select_project with already opened project activates tab
+        cur_count = win.notebook.count()
+        win.open_or_select_project(p2)
+        self.assertEqual(win.notebook.count(), cur_count)
+        self.assertTrue(
+            win.notebook.tabText(win.notebook.currentIndex()).startswith("Project Beta")
+        )
+        win.close()
+
     def test_main_window_notepad_sync_activation(self):
         from tasks_app import MainWindow
         import time
@@ -738,6 +981,47 @@ class TestPySide6MainWindow(unittest.TestCase):
         self.assertEqual(page.task_list.item(0).text(), "Externally Modified Task")
         win.close()
 
+    def test_main_window_notepad_triggering_and_sync(self):
+        import tasks_app
+        from tasks_app import MainWindow
+        import core_models
+        import time
+
+        win = MainWindow(base_dir=self.test_dir)
+        opened_paths = []
+        orig_open = tasks_app.open_file_in_editor
+        tasks_app.open_file_in_editor = lambda path: opened_paths.append(path)
+        try:
+            # Trigger notepad for active tab
+            win.on_open_active_project_in_notepad()
+            self.assertEqual(len(opened_paths), 1)
+            self.assertEqual(opened_paths[0], win.notebook.currentWidget().filename)
+
+            # Trigger archive opening when file exists
+            arch_path = core_models.ProjectModel.get_archive_path(
+                self.test_dir, self.settings
+            )
+            with open(arch_path, "w", encoding="utf-8") as f:
+                f.write("Archived entry\n")
+            win.on_open_archive()
+            self.assertEqual(len(opened_paths), 2)
+            self.assertEqual(opened_paths[1], arch_path)
+
+            # External modification sync during window activation
+            page = win.notebook.currentWidget()
+            time.sleep(0.05)
+            with open(page.filename, "w", encoding="utf-8") as f:
+                f.write("External Sync Task\n")
+            win._handle_window_activated()
+            self.assertEqual(page.task_list.count(), 1)
+            self.assertEqual(page.task_list.item(0).text(), "External Sync Task")
+
+            # Reload daily tab method
+            win.reload_daily_tab()
+        finally:
+            tasks_app.open_file_in_editor = orig_open
+        win.close()
+
     def test_main_window_shortcuts_registration(self):
         from tasks_app import MainWindow
         from PySide6.QtGui import QShortcut
@@ -745,6 +1029,54 @@ class TestPySide6MainWindow(unittest.TestCase):
         win = MainWindow(base_dir=self.test_dir)
         shortcuts = win.findChildren(QShortcut)
         self.assertGreaterEqual(len(shortcuts), 19)
+        win.close()
+
+    def test_main_window_accelerator_and_shortcut_dispatch(self):
+        from tasks_app import MainWindow
+        from PySide6.QtGui import QShortcut, QGuiApplication
+        from PySide6.QtWidgets import QMessageBox
+
+        win = MainWindow(base_dir=self.test_dir)
+        page = win.notebook.currentWidget()
+        page.settings.set("behavior", "confirm_on_archive", False)
+        page.new_task_input.setText("Shortcut Task 1")
+        page.on_add_task()
+        page.new_task_input.setText("Shortcut Task 2")
+        page.on_add_task()
+
+        # Dispatch commands to active tab
+        page.task_list.setCurrentRow(0)
+        win.dispatch_to_active_tab("copy")
+        self.assertEqual(
+            QGuiApplication.clipboard().text(), page.task_list.item(0).text()
+        )
+
+        # Shortcuts map check
+        shortcuts = win.findChildren(QShortcut)
+        key_map = {sc.key().toString(): sc for sc in shortcuts}
+        self.assertIn("Ctrl+M", key_map)
+        self.assertIn("Ctrl+Z", key_map)
+        self.assertIn("Ctrl+C", key_map)
+
+        # Trigger Ctrl+M shortcut
+        initial_count = page.task_list.count()
+        page.task_list.setCurrentRow(0)
+        key_map["Ctrl+M"].activated.emit()
+        self.assertEqual(page.task_list.count(), initial_count - 1)
+
+        # Trigger Ctrl+Z shortcut
+        key_map["Ctrl+Z"].activated.emit()
+        self.assertEqual(page.task_list.count(), initial_count)
+
+        # Test on_harvest with mock QMessageBox
+        orig_info = QMessageBox.information
+        QMessageBox.information = staticmethod(
+            lambda *a, **kw: QMessageBox.StandardButton.Ok
+        )
+        try:
+            win.on_harvest()
+        finally:
+            QMessageBox.information = orig_info
         win.close()
 
     def test_single_instance_logic(self):
@@ -799,6 +1131,47 @@ class TestPySide6MainWindow(unittest.TestCase):
                 )
 
 
+class TestCleanCodeGuards(unittest.TestCase):
+    """Verifies strict adherence to clean-code-guard constraints and zero-wx codebase policy."""
+
+    def test_all_python_files_have_zero_wx_imports(self):
+        repo_dir = Path(__file__).parent
+        py_files = sorted(repo_dir.glob("*.py"))
+        self.assertGreaterEqual(len(py_files), 4)
+        for py_file in py_files:
+            source = py_file.read_text(encoding="utf-8")
+            parsed = ast.parse(source)
+            for node in ast.walk(parsed):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        self.assertFalse(
+                            alias.name == "wx" or alias.name.startswith("wx."),
+                            f"Found wx import '{alias.name}' in {py_file.name}:{node.lineno}",
+                        )
+                elif isinstance(node, ast.ImportFrom):
+                    self.assertFalse(
+                        node.module
+                        and (node.module == "wx" or node.module.startswith("wx.")),
+                        f"Found from-wx import '{node.module}' in {py_file.name}:{node.lineno}",
+                    )
+
+    def test_clean_code_function_length_limits(self):
+        repo_dir = Path(__file__).parent
+        target_files = [repo_dir / "tasks_app.py", repo_dir / "dialogs.py"]
+        for py_file in target_files:
+            source = py_file.read_text(encoding="utf-8")
+            parsed = ast.parse(source)
+            for node in ast.walk(parsed):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    length = (node.end_lineno - node.lineno) + 1
+                    self.assertLessEqual(
+                        length,
+                        20,
+                        f"Function '{node.name}' in {py_file.name} exceeds 20 lines ({length} lines)",
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
