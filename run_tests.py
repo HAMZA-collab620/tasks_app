@@ -620,5 +620,185 @@ class TestPySide6Dialogs(unittest.TestCase):
                 )
 
 
+class TestPySide6MainWindow(unittest.TestCase):
+    """Verifies PySide6 MainWindow, TaskProjectWidget, accessibility, shortcuts, and invariants."""
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+        from PySide6.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication(["-platform", "offscreen"])
+
+    def setUp(self):
+        self.test_dir = Path(tempfile.mkdtemp())
+        self.settings = SettingsManager(self.test_dir)
+        self.workspace = ProjectWorkspace(self.test_dir)
+        self.p1 = self.workspace.create_project("Project Alpha")
+        self.p1_path = self.workspace.get_project_path(self.p1)
+        with open(self.p1_path, "w", encoding="utf-8") as f:
+            f.write("Task 1\n⭐ Task 2\nTask 3\n")
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_copy_to_clipboard(self):
+        from tasks_app import copy_to_clipboard
+        from PySide6.QtGui import QGuiApplication
+
+        res = copy_to_clipboard("test clipboard text")
+        self.assertTrue(res)
+        self.assertEqual(QGuiApplication.clipboard().text(), "test clipboard text")
+
+    def test_task_project_widget_instantiation_and_accessibility(self):
+        from tasks_app import TaskProjectWidget
+
+        widget = TaskProjectWidget(None, self.p1_path, self.settings)
+        self.assertEqual(widget.search_input.accessibleName(), "Filter")
+        self.assertEqual(widget.task_list.accessibleName(), "Tasks")
+        self.assertEqual(widget.new_task_input.accessibleName(), "Add Task")
+        self.assertEqual(widget.task_list.count(), 3)
+        widget.timer.stop()
+
+    def test_task_project_widget_add_and_filter(self):
+        from tasks_app import TaskProjectWidget
+
+        widget = TaskProjectWidget(None, self.p1_path, self.settings)
+        widget.new_task_input.setText("Brand new item")
+        widget.on_add_task()
+        self.assertEqual(widget.new_task_input.text(), "")
+        self.assertEqual(widget.task_list.count(), 4)
+
+        widget.search_input.setText("brand")
+        widget.update_display("brand")
+        self.assertEqual(widget.task_list.count(), 1)
+        widget.timer.stop()
+
+    def test_task_project_widget_commands(self):
+        from tasks_app import TaskProjectWidget
+
+        widget = TaskProjectWidget(None, self.p1_path, self.settings)
+        # Row 0 is '⭐ Task 2' (already pinned), row 1 is 'Task 1' (unpinned)
+        widget.task_list.setCurrentRow(1)
+        widget.dispatch_command("pin")
+        self.assertTrue(
+            widget.task_list.item(widget.task_list.currentRow()).text().startswith("⭐")
+        )
+
+        widget.dispatch_command("move_down")
+        widget.dispatch_command("undo")
+
+        # Complete/archive task
+        widget.task_list.setCurrentRow(0)
+        widget.dispatch_command("complete")
+        self.assertEqual(widget.task_list.count(), 2)
+        widget.timer.stop()
+
+    def test_main_window_instantiation_and_tabs(self):
+        from tasks_app import MainWindow
+
+        win = MainWindow(base_dir=self.test_dir)
+        self.assertEqual(win.windowTitle(), "Dar Tasks")
+        self.assertGreaterEqual(win.notebook.count(), 1)
+        self.assertEqual(win.notebook.accessibleName(), "Projects Tabs")
+        win.close()
+
+    def test_main_window_tab_operations(self):
+        from tasks_app import MainWindow
+
+        win = MainWindow(base_dir=self.test_dir)
+        initial_count = win.notebook.count()
+        p2 = win.workspace.create_project("Project Beta")
+        win.open_or_select_project(p2)
+        self.assertEqual(win.notebook.count(), initial_count + 1)
+
+        win.select_tab(0)
+        self.assertEqual(win.notebook.currentIndex(), 0)
+        win.next_tab()
+        self.assertEqual(win.notebook.currentIndex(), 1)
+
+        win.on_project_renamed(p2, "Project Gamma.txt")
+        win.on_project_deleted("Project Gamma.txt")
+        self.assertEqual(win.notebook.count(), initial_count)
+        win.close()
+
+    def test_main_window_notepad_sync_activation(self):
+        from tasks_app import MainWindow
+        import time
+
+        win = MainWindow(base_dir=self.test_dir)
+        page = win.notebook.widget(0)
+        # External modification
+        time.sleep(0.05)
+        with open(page.filename, "w", encoding="utf-8") as f:
+            f.write("Externally Modified Task\n")
+        # Trigger activation
+        win._handle_window_activated()
+        self.assertEqual(page.task_list.count(), 1)
+        self.assertEqual(page.task_list.item(0).text(), "Externally Modified Task")
+        win.close()
+
+    def test_main_window_shortcuts_registration(self):
+        from tasks_app import MainWindow
+        from PySide6.QtGui import QShortcut
+
+        win = MainWindow(base_dir=self.test_dir)
+        shortcuts = win.findChildren(QShortcut)
+        self.assertGreaterEqual(len(shortcuts), 19)
+        win.close()
+
+    def test_single_instance_logic(self):
+        from tasks_app import MainWindow, setup_single_instance
+        from PySide6.QtNetwork import QLocalSocket
+        import getpass
+
+        win = MainWindow(base_dir=self.test_dir)
+        is_primary = setup_single_instance(self.app, win)
+        self.assertTrue(is_primary)
+        self.assertIsNotNone(win.single_instance_server)
+
+        # Secondary instance attempts to connect
+        sock_name = f"DarTasksSingleInstance-{getpass.getuser()}"
+        client = QLocalSocket()
+        client.connectToServer(sock_name)
+        self.assertTrue(client.waitForConnected(1000))
+        client.write(b"ACTIVATE\n")
+        client.flush()
+        client.waitForBytesWritten(1000)
+        client.disconnectFromServer()
+        win.close()
+
+    def test_tasks_app_has_zero_wx_imports(self):
+        tasks_app_file = Path(__file__).parent / "tasks_app.py"
+        source = tasks_app_file.read_text(encoding="utf-8")
+        parsed = ast.parse(source)
+        for node in ast.walk(parsed):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    self.assertFalse(
+                        alias.name == "wx" or alias.name.startswith("wx."),
+                        f"Found wx import in tasks_app.py: {alias.name}",
+                    )
+            elif isinstance(node, ast.ImportFrom):
+                self.assertFalse(
+                    node.module and (node.module == "wx" or node.module.startswith("wx.")),
+                    f"Found from-wx import in tasks_app.py: {node.module}",
+                )
+
+    def test_tasks_app_clean_code_function_length_limit(self):
+        tasks_app_file = Path(__file__).parent / "tasks_app.py"
+        source = tasks_app_file.read_text(encoding="utf-8")
+        parsed = ast.parse(source)
+        for node in ast.walk(parsed):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                length = (node.end_lineno - node.lineno) + 1
+                self.assertLessEqual(
+                    length,
+                    20,
+                    f"Function '{node.name}' in tasks_app.py exceeds 20 lines ({length} lines)",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
+
