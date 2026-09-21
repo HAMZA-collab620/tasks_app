@@ -1,2 +1,2 @@
-wxPython>=4.2.0
+PySide6>=6.5.0
 send2trash>=1.8.0
