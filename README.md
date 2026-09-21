@@ -1,71 +1,119 @@
-# Dar Tasks - Task Management Application
+# دار المهام (Dar Tasks) - نظام إدارة المهام والمشاريع
 
-Dar Tasks is a lightweight, cross-platform desktop application designed for efficient task and project management. Built with Python and wxPython, it provides a clean, dark-themed interface with support for both English and Arabic.
+تطبيق مكتبي خفيف وسريع لإدارة المهام والمشاريع اليومية، يجمع بين البساطة الفائقة والملكية التامة للملفات النصية، مع دعم أصيل لبيئة التشغيل متعددة اللغات (العربية والإنجليزية)، والتوافق التام مع قارئات الشاشة ومحررات النصوص الخارجية.
 
-## Features
+---
 
-- **Project Management**: Organize your work into different projects with a dedicated manager.
-- **Daily Tasks**: Track your routine and daily goals effectively.
-- **Global Search**: Quickly find tasks across all your projects.
-- **Today's Harvest**: Visualize and track your daily achievements.
-- **Archiving System**: Automatically archive completed tasks to maintain a clean workspace.
-- **Multi-language Support**: Standard internationalization supporting English and Arabic.
-- **Accessible & Keyboard-First**: Optimized for screen readers (NVDA) with native controls and full keyboard shortcuts.
-- **Single Instance Enforcement**: Ensures only one instance of the app runs at a time.
+## المقاصد والمزايا الرئيسة
 
-## Project Structure
+- **إدارة المشاريع المستقلة:** تنظيم الأعمال والمهام في ملفات مشاريع نصية منفصلة مع إمكانية التثبيت والترتيب وإعادة التسمية.
+- **المهام اليومية والحصاد:** تخصيص مسار دائم للمهام اليومية مع التدوير التلقائي وحفظ حصاد المنجزات اليومية.
+- **البحث الشامل الفوري:** استعلام كسول وسريع عن المهام عبر كافة ملفات المشاريع في مستودع العمل.
+- **التخزين الذري اللحظي:** حفظ التغييرات فور إجرائها في ملفات نصية نقية دون فقد للبيانات أو تضارب في الذاكرة.
+- **التكامل التام مع المفكرة (Notepad):** إمكانية تحرير أي ملف مشروع مباشرة في محرر المفكرة عبر اختصار لوحة المفاتيح، مع استشعار التعديل الخارجي وتحديث الواجهة تلقائياً بمجرد إعادة تنشيط النافذة.
+- **الوصولية والنفاذية الشاملة:** مواءمة تامة لقارئات الشاشة (NVDA) وفق معايير WCAG 2.1 AA، مع دعم كامل للوحة المفاتيح وعناصر التحكم الأصلية وحروف الاختصار.
+- **التشغيل الأحادي المحكم:** منع فتح نسخ متكررة عبر خادم المقابس المحلي، وتنشيط النافذة المفتوحة مسبقاً عند محاولة تشغيل نسخة جديدة.
 
-- `core_models.py`: Headless domain layer managing tasks, atomic file persistence, search, and workspace invariants.
-- `dialogs.py`: Accessible wxPython modal dialog adapters for Project Management, Global Search, and Settings.
-- `tasks_app.py`: Main desktop presentation frame, tab notebook coordination, and shortcuts engine.
-- `run_tests.py`: Standard automated regression test suite covering domain logic and persistence.
-- `requirements.txt`: Python package dependencies.
-- [CHANGELOG.md](CHANGELOG.md): Chronological log of project milestones and architectural changes.
-- `project_state.md`: Current architecture, deep module boundaries, and status.
+---
 
-## Installation & Running
+## البنية المعمارية
 
-### Prerequisites
+يعتمد التطبيق بنية برمجية مسطحة ومقسمة إلى طبقات عميقة مستقلة:
 
-- Python 3.10+
-- Dependencies listed in `requirements.txt`
+- **`core_models.py` (طبقة النطاق المجرد):**
+  تضم كائنات النطاق الأساسية (`Task`, `ProjectModel`, `ProjectWorkspace`, `SearchEngine`, `BackupManager`, `SettingsManager`, `Translator`)، وتتولى عمليات المعالجة والحفظ الذري، والبحث، والتدويل المعياري عبر GNU gettext، واستشعار تعديل الملفات عبر وقت التعديل (`st_mtime`).
+- **`dialogs.py` (موائمات النوافذ الحوارية):**
+  تضم النماذج المشروطة للبحث الشامل (`GlobalSearchDialog`)، وإدارة المشاريع (`ProjectManagerDialog`)، وضبط الخيارات (`SettingsDialog`)، مع ضبط أسماء الوصولية وترتيب الجدولة وحروف الاختصار عبر `setBuddy`.
+- **`tasks_app.py` (طبقة العرض والنافذة الرئيسة):**
+  تضم نافذة العرض الرئيسة (`MainWindow`)، ولوح عرض مهام المشروع (`TaskProjectWidget`)، وقائمة المهام الميسرة للوصول (`AccessibleTaskListWidget`)، وخادم التحقق من التشغيل الأحادي (`QLocalServer`)، وتوزيع أوامر الحافظة والاختصارات.
+- **`run_tests.py` (حزمة الاختبارات الآلية والتحقق النظيف):**
+  تضم 69 اختباراً مؤتمتاً تجتاز بنسبة 100%، وتغطي اختبارات النطاق والتخزين، والاختبارات التكاملية للشاشات الافتراضية، وفحص القواعد النظيفة الشامل عبر شجرة التركيب المجردة (AST).
+- **`tasks_app.spec` (مواصفة التجميع المستقل):**
+  ملف التجميع الخاص بأداة PyInstaller لإنتاج ملف تنفيذي موحد ونافذي خفيف الحجم مع استبعاد الوحدات غير المستخدمة وتضمين كتالوجات الترجمة.
 
-### Setup
+---
 
-1. Clone the repository:
-   ```bash
-   git clone <repository-url>
-   cd tasks_app
-   ```
+## التثبيت والتشغيل
 
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+### المتطلبات الأساسية
 
-3. Run the application:
-   ```bash
-   python tasks_app.py
-   ```
+- بيئة بايثون بإصدار 3.10 أو أحدث.
+- تثبيت الحزم المطلوبة من ملف التبعيات:
 
-4. Run tests:
-   ```bash
-   python run_tests.py
-   ```
+```bash
+pip install -r requirements.txt
+```
 
-## Development
+### تشغيل التطبيق
 
-- **Build**: The application can be packaged into an executable using the provided `tasks_app.spec` file with PyInstaller:
-  ```bash
-  pyinstaller tasks_app.spec
-  ```
+تشغيل التطبيق مباشرة عبر سطر الأوامر:
 
-## Developer
+```bash
+python tasks_app.py
+```
 
-- **Name:** Kamal Yaser (كمال ياسر)
-- **Email:** kamalyaser31@gmail.com
-- **Telegram:** [@kamalyaser31](https://t.me/kamalyaser31)
+### تشغيل الاختبارات الآلية
 
-## License
+التحقق من صحة النظام واجتياز حزمة الاختبارات بالكامل:
 
-This project is licensed under the terms of the MIT license.
+```bash
+python run_tests.py
+```
+
+### بناء الملف التنفيذي المستقل
+
+تجميع التطبيق في ملف تنفيذي نافذي واحد:
+
+```bash
+pyinstaller tasks_app.spec
+```
+
+---
+
+## جدول اختصارات لوحة المفاتيح
+
+| الاختصار | الإجراء والوظيفة | نطاق العمل |
+|---|---|---|
+| Return / Enter | إتمام المهمة المحددة وأرشفتها | قائمة المهام |
+| النقر المزدوج | إتمام المهمة المحددة وأرشفتها | قائمة المهام |
+| Ctrl+M | إتمام المهمة المحددة وأرشفتها | لسان المشروع النشط |
+| Ctrl+Z | التراجع عن آخر أرشفة واستعادة المهمة | لسان المشروع النشط |
+| F2 | تعديل نص المهمة المحددة | قائمة المهام |
+| Delete | حذف المهمة المحددة نهائياً | قائمة المهام |
+| Ctrl+C | نسخ نص المهمة إلى الحافظة | قائمة المهام |
+| Ctrl+Up | تحريك المهمة المحددة خطوة للأعلى | قائمة المهام |
+| Ctrl+Down | تحريك المهمة المحددة خطوة للأسفل | قائمة المهام |
+| F4 | فتح ملف المشروع النشط في محرر المفكرة | عام |
+| Ctrl+F | فتح نافذة البحث الشامل في المشاريع | عام |
+| Ctrl+Tab | الانتقال إلى لسان المشروع التالي | عام |
+| Ctrl+1 إلى Ctrl+9 | الانتقال المباشر للسان المشروع بحسب رقمه | عام |
+| Alt+P | فتح نافذة مدير المشاريع | شريط الأدوات |
+| Alt+S | فتح نافذة البحث الشامل | شريط الأدوات |
+| Alt+N | فتح ملف المشروع في محرر المفكرة | شريط الأدوات |
+| Alt+H | عرض نافذة حصاد اليوم | شريط الأدوات |
+| Alt+O | فتح ملف أرشيف المهام في المفكرة | شريط الأدوات |
+| Alt+T | فتح نافذة إعدادات التطبيق | شريط الأدوات |
+| Alt+F | الانتقال المباشر لحقل تصفية وبحث المهام | لسان المشروع |
+| Alt+A | الانتقال المباشر لحقل إضافة مهمة جديدة | لسان المشروع |
+
+---
+
+## التوثيق وسجل التطوير
+
+- [سجل التغييرات التراكمي (CHANGELOG.md)](CHANGELOG.md)
+- [ملف حالة المشروع المعمارية (project_state.md)](project_state.md)
+
+---
+
+## بيانات المطور
+
+- **الاسم:** كمال ياسر (Kamal Yaser)
+- **البريد الإلكتروني:** kamalyaser31@gmail.com
+- **حساب تيليجرام:** [@kamalyaser31](https://t.me/kamalyaser31)
+- **المعرف المباشر:** kamalyaser31
+
+---
+
+## رخصة الاستخدام
+
+يخضع هذا المشروع لشروط رخصة MIT مفتوحة المصدر.
