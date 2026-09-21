@@ -4,6 +4,8 @@ Executes against isolated temporary directories using Python's standard unittest
 Complies rigorously with test-guard principles: real infrastructure, zero fake mocks, and scenario naming.
 """
 
+import ast
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -435,6 +437,187 @@ class TestBackupManager(unittest.TestCase):
         self.assertTrue(daily_arch.exists())
         with open(daily_arch, "r", encoding="utf-8") as f:
             self.assertIn("Yesterday unfinished task", f.read())
+
+
+class TestPySide6Dialogs(unittest.TestCase):
+    """Verifies modal dialog instantiation, accessibility, clean-code limits, and Qt event adapters."""
+
+    @classmethod
+    def setUpClass(cls):
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+        from PySide6.QtWidgets import QApplication
+
+        cls.app = QApplication.instance() or QApplication(["-platform", "offscreen"])
+
+    def setUp(self):
+        self.test_dir = Path(tempfile.mkdtemp())
+        self.settings = SettingsManager(self.test_dir)
+        self.workspace = ProjectWorkspace(self.test_dir)
+        self.p1 = self.workspace.create_project("Project Alpha")
+        with open(
+            self.workspace.get_project_path(self.p1), "w", encoding="utf-8"
+        ) as f:
+            f.write("Urgent search task\n")
+        self.search_engine = SearchEngine(self.workspace)
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_settings_dialog_instantiation_and_accessibility(self):
+        from PySide6.QtWidgets import QDialog
+        from dialogs import SettingsDialog
+
+        dlg = SettingsDialog(None, self.settings)
+        self.assertIsInstance(dlg, QDialog)
+        self.assertEqual(dlg.accessibleName(), "Settings")
+        self.assertEqual(dlg.confirm_archive_cb.accessibleName(), "Confirm on archive")
+        self.assertEqual(dlg.confirm_delete_cb.accessibleName(), "Confirm on delete")
+        self.assertEqual(
+            dlg.auto_save_spin.accessibleName(), "Auto-save interval (seconds)"
+        )
+        self.assertEqual(dlg.lang_choice.accessibleName(), "Language")
+        dlg.close()
+
+    def test_settings_dialog_save_logic(self):
+        from dialogs import SettingsDialog
+
+        dlg = SettingsDialog(None, self.settings)
+        dlg.confirm_archive_cb.setChecked(True)
+        dlg.confirm_delete_cb.setChecked(False)
+        dlg.auto_save_spin.setValue(15)
+        dlg.lang_choice.setCurrentIndex(1)
+        dlg.on_save()
+        self.assertTrue(self.settings.get("behavior", "confirm_on_archive"))
+        self.assertFalse(self.settings.get("behavior", "confirm_on_delete"))
+        self.assertEqual(self.settings.get("behavior", "auto_save_interval"), 15)
+        self.assertEqual(self.settings.get("general", "language"), "ar")
+        dlg.close()
+
+    def test_global_search_dialog_instantiation_and_query(self):
+        from PySide6.QtWidgets import QDialog
+        from dialogs import GlobalSearchDialog
+
+        dlg = GlobalSearchDialog(None, self.search_engine, settings=self.settings)
+        self.assertIsInstance(dlg, QDialog)
+        self.assertEqual(dlg.accessibleName(), "Global Search")
+        self.assertEqual(dlg.search_ctrl.accessibleName(), "Search Query")
+        self.assertEqual(dlg.results_list.accessibleName(), "Search Results")
+        dlg.search_ctrl.setText("urgent")
+        self.assertEqual(dlg.results_list.count(), 1)
+        dlg.close()
+
+    def test_project_manager_dialog_instantiation_and_listing(self):
+        from PySide6.QtWidgets import QDialog
+        from dialogs import ProjectManagerDialog
+
+        dlg = ProjectManagerDialog(None, self.workspace)
+        self.assertIsInstance(dlg, QDialog)
+        self.assertEqual(dlg.accessibleName(), "Project Manager")
+        self.assertEqual(dlg.project_list.accessibleName(), "Projects List")
+        self.assertGreaterEqual(dlg.project_list.count(), 1)
+        dlg.close()
+
+    def test_dialogs_has_zero_wx_imports(self):
+        dialogs_file = Path(__file__).parent / "dialogs.py"
+        source = dialogs_file.read_text(encoding="utf-8")
+        parsed = ast.parse(source)
+        for node in ast.walk(parsed):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    self.assertFalse(
+                        alias.name == "wx" or alias.name.startswith("wx."),
+                        f"Found wx import: {alias.name}",
+                    )
+            elif isinstance(node, ast.ImportFrom):
+                self.assertFalse(
+                    node.module and (node.module == "wx" or node.module.startswith("wx.")),
+                    f"Found from-wx import: {node.module}",
+                )
+
+    def test_global_search_dialog_actions_and_activation(self):
+        from PySide6.QtWidgets import QWidget
+        from dialogs import GlobalSearchDialog
+
+        class FakeParent(QWidget):
+            def __init__(self):
+                super().__init__()
+                self.opened = None
+
+            def open_or_select_project(self, filename):
+                self.opened = filename
+
+        parent = FakeParent()
+        dlg = GlobalSearchDialog(parent, self.search_engine, settings=self.settings)
+        dlg.search_ctrl.setText("urgent")
+        self.assertEqual(dlg.results_list.count(), 1)
+
+        # Test search return moves focus to results
+        dlg.on_search_return()
+        self.assertEqual(dlg.results_list.currentRow(), 0)
+
+        # Test opening task dispatches to parent
+        dlg.on_open_task()
+        self.assertEqual(parent.opened, self.p1)
+        dlg.close()
+
+    def test_project_manager_actions_pin_and_move(self):
+        from PySide6.QtWidgets import QWidget
+        from dialogs import ProjectManagerDialog
+
+        class FakeParent(QWidget):
+            def __init__(self):
+                super().__init__()
+                self.opened = None
+
+            def open_or_select_project(self, filename):
+                self.opened = filename
+
+        p2 = self.workspace.create_project("Project Beta")
+        parent = FakeParent()
+        dlg = ProjectManagerDialog(parent, self.workspace)
+        self.assertGreaterEqual(len(dlg.projects), 2)
+
+        # Select second project and pin it
+        dlg.project_list.setCurrentRow(1)
+        dlg.on_pin()
+        self.assertTrue(dlg.projects[1]["pinned"] or dlg.projects[0]["pinned"])
+
+        # Open selected project
+        dlg.project_list.setCurrentRow(0)
+        selected_fn = dlg.projects[0]["filename"]
+        dlg.on_open()
+        self.assertEqual(parent.opened, selected_fn)
+        dlg.close()
+
+    def test_settings_dialog_reset_defaults(self):
+        from dialogs import SettingsDialog
+
+        self.settings.set("behavior", "confirm_on_archive", True)
+        self.settings.set("behavior", "auto_save_interval", 45)
+        self.settings.set("general", "language", "ar")
+
+        dlg = SettingsDialog(None, self.settings)
+        self.assertTrue(dlg.confirm_archive_cb.isChecked())
+        self.assertEqual(dlg.auto_save_spin.value(), 45)
+
+        dlg._apply_reset()
+        self.assertFalse(dlg.confirm_archive_cb.isChecked())
+        self.assertEqual(dlg.auto_save_spin.value(), 2)
+        self.assertEqual(dlg.lang_choice.currentIndex(), 0)
+        dlg.close()
+
+    def test_dialogs_clean_code_function_length_limit(self):
+        dialogs_file = Path(__file__).parent / "dialogs.py"
+        source = dialogs_file.read_text(encoding="utf-8")
+        parsed = ast.parse(source)
+        for node in ast.walk(parsed):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                length = (node.end_lineno - node.lineno) + 1
+                self.assertLessEqual(
+                    length,
+                    20,
+                    f"Function '{node.name}' in dialogs.py exceeds 20 lines ({length} lines)",
+                )
 
 
 if __name__ == "__main__":

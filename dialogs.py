@@ -1,11 +1,27 @@
 """
 Dar Tasks - Presentation Dialog Adapters.
 Contains modal dialogs for Project Management, Global Search, and Settings.
-Connects accessible wxPython user controls directly to deep domain module seams.
+Connects accessible PySide6 user controls directly to deep domain module seams.
 """
 
 from pathlib import Path
-import wx
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
 from core_models import (
     ProjectWorkspace,
@@ -17,73 +33,92 @@ from core_models import (
 )
 
 
-class GlobalSearchDialog(wx.Dialog):
+class AccessibleActionListWidget(QListWidget):
+    """List widget dispatching Enter/Return key to action callback."""
+
+    def __init__(self, activate_action, parent=None):
+        super().__init__(parent)
+        self.activate_action = activate_action
+        self.itemDoubleClicked.connect(lambda _: self.activate_action())
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.activate_action()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
+class GlobalSearchDialog(QDialog):
     """Accessible UI adapter over the SearchEngine deep module."""
 
     def __init__(self, parent, search_engine: SearchEngine, settings=None):
+        qt_parent = parent if isinstance(parent, QWidget) else None
+        super().__init__(qt_parent)
+        self.parent_window = parent
+        self.search_engine = search_engine
         self.settings = settings
         self.translator = Translator(self.settings)
-        super().__init__(
-            parent, title=self.translator._("Global Search"), size=(600, 420)
-        )
-        self.parent, self.search_engine, self.last_results = parent, search_engine, []
+        self.last_results = []
+        self._init_window()
+        self._create_controls()
+        self._setup_layout()
+        self._setup_tab_order()
 
-        pnl = wx.Panel(self)
-        sizer = wx.BoxSizer(wx.VERTICAL)
+    def _init_window(self):
+        title = self.translator._("Global Search")
+        self.setWindowTitle(title)
+        self.setAccessibleName(title)
+        self.resize(600, 420)
 
-        row = wx.BoxSizer(wx.HORIZONTAL)
-        row.Add(
-            wx.StaticText(pnl, label=self.translator._("&Search:")),
-            0,
-            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
-            5,
-        )
-        self.search_ctrl = wx.TextCtrl(pnl, style=wx.TE_PROCESS_ENTER)
-        self.search_ctrl.SetName(self.translator._("Search Query"))
-        self.search_ctrl.Bind(wx.EVT_TEXT, self.on_search)
-        self.search_ctrl.Bind(
-            wx.EVT_TEXT_ENTER,
-            lambda e: (
-                (self.results_list.SetSelection(0), self.results_list.SetFocus())
-                if self.last_results
-                else None
-            ),
-        )
-        row.Add(self.search_ctrl, 1, wx.EXPAND)
-        sizer.Add(row, 0, wx.EXPAND | wx.ALL, 10)
+    def _create_controls(self):
+        self.search_label = QLabel(self.translator._("&Search:"), self)
+        self.search_ctrl = QLineEdit(self)
+        self.search_ctrl.setAccessibleName(self.translator._("Search Query"))
+        self.search_label.setBuddy(self.search_ctrl)
+        self.search_ctrl.textChanged.connect(self.on_search)
+        self.search_ctrl.returnPressed.connect(self.on_search_return)
 
-        sizer.Add(
-            wx.StaticText(pnl, label=self.translator._("&Results:")),
-            0,
-            wx.LEFT,
-            10,
-        )
-        self.results_list = wx.ListBox(pnl, style=wx.LB_SINGLE | wx.LB_NEEDED_SB)
-        self.results_list.SetName(self.translator._("Search Results"))
-        self.results_list.Bind(wx.EVT_LISTBOX_DCLICK, self.on_open_task)
-        self.results_list.Bind(
-            wx.EVT_KEY_DOWN,
-            lambda e: (
-                self.on_open_task()
-                if e.GetKeyCode() in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER)
-                else e.Skip()
-            ),
-        )
-        sizer.Add(self.results_list, 1, wx.EXPAND | wx.ALL, 10)
+        self.results_label = QLabel(self.translator._("&Results:"), self)
+        self.results_list = AccessibleActionListWidget(self.on_open_task, self)
+        self.results_list.setAccessibleName(self.translator._("Search Results"))
+        self.results_label.setBuddy(self.results_list)
 
-        btn_box = wx.BoxSizer(wx.HORIZONTAL)
-        np_btn = wx.Button(pnl, label=self.translator._("&Notepad"))
-        np_btn.Bind(wx.EVT_BUTTON, self.on_notepad)
-        btn_box.Add(np_btn, 0, wx.RIGHT, 5)
-        btn_box.Add(
-            wx.Button(pnl, wx.ID_CANCEL, label=self.translator._("&Close")), 0
-        )
-        sizer.Add(btn_box, 0, wx.ALIGN_RIGHT | wx.RIGHT | wx.BOTTOM, 10)
-        pnl.SetSizer(sizer)
+        self.notepad_btn = QPushButton(self.translator._("&Notepad"), self)
+        self.notepad_btn.setAccessibleName(self.translator._("Notepad"))
+        self.notepad_btn.clicked.connect(self.on_notepad)
 
-    def on_search(self, event=None):
-        query = self.search_ctrl.GetValue().strip()
-        self.results_list.Clear()
+        self.close_btn = QPushButton(self.translator._("&Close"), self)
+        self.close_btn.setAccessibleName(self.translator._("Close"))
+        self.close_btn.clicked.connect(self.reject)
+
+    def _setup_layout(self):
+        layout = QVBoxLayout(self)
+        search_layout = QHBoxLayout()
+        search_layout.addWidget(self.search_label)
+        search_layout.addWidget(self.search_ctrl)
+        layout.addLayout(search_layout)
+        layout.addWidget(self.results_label)
+        layout.addWidget(self.results_list)
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.notepad_btn)
+        btn_layout.addWidget(self.close_btn)
+        layout.addLayout(btn_layout)
+
+    def _setup_tab_order(self):
+        self.setTabOrder(self.search_ctrl, self.results_list)
+        self.setTabOrder(self.results_list, self.notepad_btn)
+        self.setTabOrder(self.notepad_btn, self.close_btn)
+
+    def on_search_return(self):
+        if self.last_results:
+            self.results_list.setCurrentRow(0)
+            self.results_list.setFocus()
+
+    def on_search(self):
+        query = self.search_ctrl.text().strip()
+        self.results_list.clear()
         if len(query) < 2:
             self.last_results = []
             return
@@ -93,281 +128,344 @@ class GlobalSearchDialog(wx.Dialog):
             else False
         )
         self.last_results = self.search_engine.search(query, case_sensitive=sens)
-        self.results_list.Set([r["formatted"] for r in self.last_results])
+        for result in self.last_results:
+            self.results_list.addItem(result["formatted"])
 
-    def on_open_task(self, event=None):
-        sel = self.results_list.GetSelection()
-        if sel != wx.NOT_FOUND and sel < len(self.last_results):
-            self.parent.open_or_select_project(self.last_results[sel]["filename"])
-            self.EndModal(wx.ID_OK)
+    def on_open_task(self):
+        row = self.results_list.currentRow()
+        if 0 <= row < len(self.last_results):
+            filename = self.last_results[row]["filename"]
+            if self.parent_window and hasattr(
+                self.parent_window, "open_or_select_project"
+            ):
+                self.parent_window.open_or_select_project(filename)
+            self.accept()
 
-    def on_notepad(self, event=None):
-        sel = self.results_list.GetSelection()
-        if sel != wx.NOT_FOUND and sel < len(self.last_results):
-            open_file_in_editor(
-                self.search_engine.workspace.get_project_path(
-                    self.last_results[sel]["filename"]
-                )
-            )
+    def on_notepad(self):
+        row = self.results_list.currentRow()
+        if 0 <= row < len(self.last_results):
+            filename = self.last_results[row]["filename"]
+            project_path = self.search_engine.workspace.get_project_path(filename)
+            open_file_in_editor(project_path)
 
 
-class ProjectManagerDialog(wx.Dialog):
+class ProjectManagerDialog(QDialog):
     """Accessible UI adapter over the ProjectWorkspace deep module."""
 
     def __init__(self, parent, workspace: ProjectWorkspace):
-        self.parent, self.workspace, self.projects = parent, workspace, []
+        qt_parent = parent if isinstance(parent, QWidget) else None
+        super().__init__(qt_parent)
+        self.parent_window = parent
+        self.workspace = workspace
+        self.projects = []
         self.translator = getattr(parent, "translator", Translator())
-        super().__init__(
-            parent,
-            title=self.translator._("Project Manager"),
-            size=(680, 440),
-        )
-
-        pnl = wx.Panel(self)
-        sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(
-            wx.StaticText(pnl, label=self.translator._("&Projects:")),
-            0,
-            wx.ALL,
-            5,
-        )
-
-        self.project_list = wx.ListBox(pnl, style=wx.LB_SINGLE | wx.LB_NEEDED_SB)
-        self.project_list.SetName(self.translator._("Projects List"))
-        self.project_list.Bind(wx.EVT_LISTBOX_DCLICK, lambda e: self.on_open())
-        self.project_list.Bind(
-            wx.EVT_KEY_DOWN,
-            lambda e: (
-                self.on_open()
-                if e.GetKeyCode() in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER)
-                else e.Skip()
-            ),
-        )
-        sizer.Add(self.project_list, 1, wx.EXPAND | wx.ALL, 5)
-
-        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        actions = [
-            (self.translator._("&New"), self.on_new),
-            (self.translator._("&Open"), self.on_open),
-            (self.translator._("&Pin ⭐"), self.on_pin),
-            (self.translator._("Move &Up"), lambda e: self.on_move(-1)),
-            (self.translator._("Move &Down"), lambda e: self.on_move(1)),
-            (self.translator._("&Rename"), self.on_rename),
-            (self.translator._("Note&pad"), self.on_notepad),
-            (self.translator._("&Delete"), self.on_delete),
-            (self.translator._("&Close"), lambda e: self.EndModal(wx.ID_CANCEL)),
-        ]
-        for label, handler in actions:
-            btn = wx.Button(pnl, label=label)
-            btn.Bind(wx.EVT_BUTTON, handler)
-            btn_sizer.Add(btn, 0, wx.ALL, 3)
-        sizer.Add(btn_sizer, 0, wx.ALIGN_CENTER | wx.ALL, 5)
-        pnl.SetSizer(sizer)
+        self._init_window()
+        self._create_controls()
+        self._setup_layout()
+        self._setup_tab_order()
         self.refresh_list()
+
+    def _init_window(self):
+        title = self.translator._("Project Manager")
+        self.setWindowTitle(title)
+        self.setAccessibleName(title)
+        self.resize(680, 440)
+
+    def _create_controls(self):
+        self.projects_label = QLabel(self.translator._("&Projects:"), self)
+        self.project_list = AccessibleActionListWidget(self.on_open, self)
+        self.project_list.setAccessibleName(self.translator._("Projects List"))
+        self.projects_label.setBuddy(self.project_list)
+        self._create_action_buttons()
+
+    def _create_action_buttons(self):
+        actions = [
+            ("new_btn", self.translator._("&New"), self.on_new, self.translator._("New")),
+            ("open_btn", self.translator._("&Open"), self.on_open, self.translator._("Open")),
+            ("pin_btn", self.translator._("&Pin ⭐"), self.on_pin, self.translator._("Pin")),
+            ("up_btn", self.translator._("Move &Up"), lambda: self.on_move(-1), self.translator._("Move Up")),
+            ("down_btn", self.translator._("Move &Down"), lambda: self.on_move(1), self.translator._("Move Down")),
+            ("rename_btn", self.translator._("&Rename"), self.on_rename, self.translator._("Rename")),
+            ("notepad_btn", self.translator._("Note&pad"), self.on_notepad, self.translator._("Notepad")),
+            ("delete_btn", self.translator._("&Delete"), self.on_delete, self.translator._("Delete")),
+            ("close_btn", self.translator._("&Close"), self.reject, self.translator._("Close")),
+        ]
+        self.buttons = []
+        for attr_name, label, slot, acc_name in actions:
+            btn = QPushButton(label, self)
+            btn.setAccessibleName(acc_name)
+            btn.clicked.connect(slot)
+            setattr(self, attr_name, btn)
+            self.buttons.append(btn)
+
+    def _setup_layout(self):
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.projects_label)
+        layout.addWidget(self.project_list)
+        btn_layout = QHBoxLayout()
+        for btn in self.buttons:
+            btn_layout.addWidget(btn)
+        layout.addLayout(btn_layout)
+
+    def _setup_tab_order(self):
+        previous_widget = self.project_list
+        for btn in self.buttons:
+            self.setTabOrder(previous_widget, btn)
+            previous_widget = btn
 
     def refresh_list(self):
         self.projects = self.workspace.list_projects()
-        sfx = self.translator._(" (daily)")
-        self.project_list.Set(
-            [
-                f"{'⭐ ' if p['pinned'] else ''}{get_project_display_name(p['filename'], self.translator)}{sfx if p['readonly'] else ''}"
-                for p in self.projects
-            ]
-        )
+        suffix = self.translator._(" (daily)")
+        self.project_list.clear()
+        for proj in self.projects:
+            star = "⭐ " if proj["pinned"] else ""
+            display = get_project_display_name(proj["filename"], self.translator)
+            daily = suffix if proj["readonly"] else ""
+            self.project_list.addItem(f"{star}{display}{daily}")
 
-    def on_new(self, event=None):
-        dlg = wx.TextEntryDialog(
+    def on_new(self):
+        name, accepted = QInputDialog.getText(
             self,
-            self.translator._("New project name:"),
             self.translator._("New Project"),
+            self.translator._("New project name:"),
         )
-        if dlg.ShowModal() == wx.ID_OK and self.workspace.create_project(
-            dlg.GetValue()
-        ):
+        if accepted and name.strip():
+            if self.workspace.create_project(name.strip()):
+                self.refresh_list()
+
+    def on_open(self):
+        row = self.project_list.currentRow()
+        if 0 <= row < len(self.projects):
+            filename = self.projects[row]["filename"]
+            if self.parent_window and hasattr(
+                self.parent_window, "open_or_select_project"
+            ):
+                self.parent_window.open_or_select_project(filename)
+            self.accept()
+
+    def on_notepad(self):
+        row = self.project_list.currentRow()
+        if 0 <= row < len(self.projects):
+            open_file_in_editor(Path(self.projects[row]["path"]))
+
+    def on_pin(self):
+        row = self.project_list.currentRow()
+        if 0 <= row < len(self.projects) and not self.projects[row]["readonly"]:
+            self.workspace.toggle_pin(self.projects[row]["filename"])
             self.refresh_list()
-        dlg.Destroy()
-
-    def on_open(self, event=None):
-        sel = self.project_list.GetSelection()
-        if sel != wx.NOT_FOUND and sel < len(self.projects):
-            self.parent.open_or_select_project(self.projects[sel]["filename"])
-            self.EndModal(wx.ID_OK)
-
-    def on_notepad(self, event=None):
-        sel = self.project_list.GetSelection()
-        if sel != wx.NOT_FOUND and sel < len(self.projects):
-            open_file_in_editor(Path(self.projects[sel]["path"]))
-
-    def on_pin(self, event=None):
-        sel = self.project_list.GetSelection()
-        if sel != wx.NOT_FOUND and not self.projects[sel]["readonly"]:
-            self.workspace.toggle_pin(self.projects[sel]["filename"])
-            self.refresh_list()
-            self.project_list.SetSelection(sel)
+            self.project_list.setCurrentRow(row)
 
     def on_move(self, direction: int):
-        sel = self.project_list.GetSelection()
-        if sel != wx.NOT_FOUND and self.workspace.move_project(sel, direction):
-            self.refresh_list()
-            self.project_list.SetSelection(sel + direction)
+        row = self.project_list.currentRow()
+        if 0 <= row < len(self.projects):
+            if self.workspace.move_project(row, direction):
+                self.refresh_list()
+                self.project_list.setCurrentRow(row + direction)
 
-    def on_rename(self, event=None):
-        sel = self.project_list.GetSelection()
-        if sel == wx.NOT_FOUND or self.projects[sel]["readonly"]:
+    def on_rename(self):
+        row = self.project_list.currentRow()
+        if row < 0 or row >= len(self.projects) or self.projects[row]["readonly"]:
             return
-        p = self.projects[sel]
-        disp = get_project_display_name(p["filename"], self.translator)
-        dlg = wx.TextEntryDialog(
+        proj = self.projects[row]
+        display = get_project_display_name(proj["filename"], self.translator)
+        new_name, accepted = QInputDialog.getText(
             self,
-            self.translator._("New project name:"),
             self.translator._("Rename Project"),
-            disp,
+            self.translator._("New project name:"),
+            text=display,
         )
-        if dlg.ShowModal() == wx.ID_OK:
-            renamed = self.workspace.rename_project(p["filename"], dlg.GetValue())
-            if renamed:
-                if hasattr(self.parent, "on_project_renamed"):
-                    self.parent.on_project_renamed(p["filename"], renamed)
-                self.refresh_list()
-        dlg.Destroy()
+        if accepted and new_name.strip():
+            self._apply_rename(proj["filename"], new_name.strip())
 
-    def on_delete(self, event=None):
-        sel = self.project_list.GetSelection()
-        if sel == wx.NOT_FOUND or self.projects[sel]["readonly"]:
+    def _apply_rename(self, old_filename: str, new_name: str):
+        renamed = self.workspace.rename_project(old_filename, new_name)
+        if renamed:
+            if self.parent_window and hasattr(
+                self.parent_window, "on_project_renamed"
+            ):
+                self.parent_window.on_project_renamed(old_filename, renamed)
+            self.refresh_list()
+
+    def on_delete(self):
+        row = self.project_list.currentRow()
+        if row < 0 or row >= len(self.projects) or self.projects[row]["readonly"]:
             return
-        p = self.projects[sel]
-        disp = get_project_display_name(p["filename"], self.translator)
-        prompt = self.translator._("Delete project '{display}'?").format(display=disp)
-        if (
-            wx.MessageBox(
-                prompt,
-                self.translator._("Confirm Delete"),
-                wx.YES_NO | wx.ICON_WARNING,
-            )
-            == wx.YES
-        ):
-            if self.workspace.delete_project(p["filename"]):
-                if hasattr(self.parent, "on_project_deleted"):
-                    self.parent.on_project_deleted(p["filename"])
-                self.refresh_list()
+        proj = self.projects[row]
+        display = get_project_display_name(proj["filename"], self.translator)
+        prompt = self.translator._("Delete project '{display}'?").format(
+            display=display
+        )
+        reply = QMessageBox.question(
+            self,
+            self.translator._("Confirm Delete"),
+            prompt,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._apply_delete(proj["filename"])
+
+    def _apply_delete(self, filename: str):
+        if self.workspace.delete_project(filename):
+            if self.parent_window and hasattr(
+                self.parent_window, "on_project_deleted"
+            ):
+                self.parent_window.on_project_deleted(filename)
+            self.refresh_list()
 
 
-class SettingsDialog(wx.Dialog):
+class SettingsDialog(QDialog):
     """Accessible dialog for managing application settings."""
 
     def __init__(self, parent, settings_manager: SettingsManager):
+        qt_parent = parent if isinstance(parent, QWidget) else None
+        super().__init__(qt_parent)
+        self.parent_window = parent
         self.settings = settings_manager
         self.translator = Translator(self.settings)
-        super().__init__(
-            parent, title=self.translator._("Settings"), size=(480, 360)
-        )
+        self._init_window()
+        self._create_controls()
+        self._setup_layout()
+        self._setup_tab_order()
 
-        pnl = wx.Panel(self)
-        sizer = wx.BoxSizer(wx.VERTICAL)
+    def _init_window(self):
+        title = self.translator._("Settings")
+        self.setWindowTitle(title)
+        self.setAccessibleName(title)
+        self.resize(480, 360)
 
-        self.confirm_archive_cb = wx.CheckBox(
-            pnl, label=self.translator._("Confirm on &archive")
-        )
-        self.confirm_delete_cb = wx.CheckBox(
-            pnl, label=self.translator._("Confirm on &delete")
-        )
-        self.confirm_archive_cb.SetValue(
-            self.settings.get("behavior", "confirm_on_archive", False)
-        )
-        self.confirm_delete_cb.SetValue(
-            self.settings.get("behavior", "confirm_on_delete", True)
-        )
-        sizer.Add(self.confirm_archive_cb, 0, wx.ALL, 8)
-        sizer.Add(self.confirm_delete_cb, 0, wx.ALL, 8)
+    def _create_controls(self):
+        self._create_checkboxes()
+        self._create_spin_box()
+        self._create_lang_combo()
+        self._create_buttons()
 
-        spin_box = wx.BoxSizer(wx.HORIZONTAL)
-        spin_box.Add(
-            wx.StaticText(
-                pnl,
-                label=self.translator._("Auto-save interval (&seconds):"),
-            ),
-            0,
-            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
-            5,
+    def _create_checkboxes(self):
+        self.confirm_archive_cb = QCheckBox(
+            self.translator._("Confirm on &archive"), self
         )
-        self.auto_save_spin = wx.SpinCtrl(
-            pnl,
-            min=1,
-            max=60,
-            initial=self.settings.get("behavior", "auto_save_interval", 2),
+        self.confirm_archive_cb.setAccessibleName(
+            self.translator._("Confirm on archive")
         )
-        spin_box.Add(self.auto_save_spin, 0)
-        sizer.Add(spin_box, 0, wx.ALL, 8)
+        archive_val = self.settings.get("behavior", "confirm_on_archive", False)
+        self.confirm_archive_cb.setChecked(archive_val)
 
-        lang_box = wx.BoxSizer(wx.HORIZONTAL)
-        lang_box.Add(
-            wx.StaticText(pnl, label=self.translator._("&Language:")),
-            0,
-            wx.ALIGN_CENTER_VERTICAL | wx.RIGHT,
-            5,
+        self.confirm_delete_cb = QCheckBox(
+            self.translator._("Confirm on &delete"), self
         )
-        self.lang_choice = wx.Choice(pnl, choices=["English", "العربية"])
-        self.lang_choice.SetSelection(
+        self.confirm_delete_cb.setAccessibleName(
+            self.translator._("Confirm on delete")
+        )
+        delete_val = self.settings.get("behavior", "confirm_on_delete", True)
+        self.confirm_delete_cb.setChecked(delete_val)
+
+    def _create_spin_box(self):
+        self.spin_label = QLabel(
+            self.translator._("Auto-save interval (&seconds):"), self
+        )
+        self.auto_save_spin = QSpinBox(self)
+        self.auto_save_spin.setRange(1, 60)
+        auto_save_val = self.settings.get("behavior", "auto_save_interval", 2)
+        self.auto_save_spin.setValue(auto_save_val)
+        self.auto_save_spin.setAccessibleName(
+            self.translator._("Auto-save interval (seconds)")
+        )
+        self.spin_label.setBuddy(self.auto_save_spin)
+
+    def _create_lang_combo(self):
+        self.lang_label = QLabel(self.translator._("&Language:"), self)
+        self.lang_choice = QComboBox(self)
+        self.lang_choice.addItems(["English", "العربية"])
+        selected_lang = (
             1 if self.settings.get("general", "language", "en") == "ar" else 0
         )
-        lang_box.Add(self.lang_choice, 1, wx.EXPAND)
-        sizer.Add(lang_box, 0, wx.EXPAND | wx.ALL, 8)
+        self.lang_choice.setCurrentIndex(selected_lang)
+        self.lang_choice.setAccessibleName(self.translator._("Language"))
+        self.lang_label.setBuddy(self.lang_choice)
 
-        sizer.AddStretchSpacer()
-        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
-        for lbl, h, uid in [
-            (
-                self.translator._("&Reset Defaults"),
-                self.on_reset,
-                wx.ID_ANY,
-            ),
-            (self.translator._("&Save"), self.on_save, wx.ID_OK),
-            (
-                self.translator._("&Cancel"),
-                lambda e: self.EndModal(wx.ID_CANCEL),
-                wx.ID_CANCEL,
-            ),
-        ]:
-            b = wx.Button(pnl, uid, label=lbl)
-            b.Bind(wx.EVT_BUTTON, h)
-            btn_sizer.Add(b, 0, wx.RIGHT if uid != wx.ID_CANCEL else 0, 5)
-        sizer.Add(btn_sizer, 0, wx.ALIGN_RIGHT | wx.ALL, 10)
-        pnl.SetSizer(sizer)
+    def _create_buttons(self):
+        self.reset_btn = QPushButton(self.translator._("&Reset Defaults"), self)
+        self.reset_btn.setAccessibleName(self.translator._("Reset Defaults"))
+        self.reset_btn.clicked.connect(self.on_reset)
 
-    def on_save(self, event=None):
+        self.save_btn = QPushButton(self.translator._("&Save"), self)
+        self.save_btn.setAccessibleName(self.translator._("Save"))
+        self.save_btn.clicked.connect(self.on_save)
+
+        self.cancel_btn = QPushButton(self.translator._("&Cancel"), self)
+        self.cancel_btn.setAccessibleName(self.translator._("Cancel"))
+        self.cancel_btn.clicked.connect(self.reject)
+
+    def _setup_layout(self):
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.confirm_archive_cb)
+        layout.addWidget(self.confirm_delete_cb)
+        self._add_field_rows(layout)
+        layout.addStretch()
+        self._add_button_row(layout)
+
+    def _add_field_rows(self, layout):
+        spin_layout = QHBoxLayout()
+        spin_layout.addWidget(self.spin_label)
+        spin_layout.addWidget(self.auto_save_spin)
+        spin_layout.addStretch()
+        layout.addLayout(spin_layout)
+        lang_layout = QHBoxLayout()
+        lang_layout.addWidget(self.lang_label)
+        lang_layout.addWidget(self.lang_choice)
+        layout.addLayout(lang_layout)
+
+    def _add_button_row(self, layout):
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.reset_btn)
+        btn_layout.addWidget(self.save_btn)
+        btn_layout.addWidget(self.cancel_btn)
+        layout.addLayout(btn_layout)
+
+    def _setup_tab_order(self):
+        self.setTabOrder(self.confirm_archive_cb, self.confirm_delete_cb)
+        self.setTabOrder(self.confirm_delete_cb, self.auto_save_spin)
+        self.setTabOrder(self.auto_save_spin, self.lang_choice)
+        self.setTabOrder(self.lang_choice, self.reset_btn)
+        self.setTabOrder(self.reset_btn, self.save_btn)
+        self.setTabOrder(self.save_btn, self.cancel_btn)
+
+    def on_save(self):
         self.settings.set(
-            "behavior", "confirm_on_archive", self.confirm_archive_cb.GetValue()
+            "behavior", "confirm_on_archive", self.confirm_archive_cb.isChecked()
         )
         self.settings.set(
-            "behavior", "confirm_on_delete", self.confirm_delete_cb.GetValue()
+            "behavior", "confirm_on_delete", self.confirm_delete_cb.isChecked()
         )
         self.settings.set(
-            "behavior", "auto_save_interval", self.auto_save_spin.GetValue()
+            "behavior", "auto_save_interval", self.auto_save_spin.value()
         )
-        self.settings.set(
-            "general",
-            "language",
-            "ar" if self.lang_choice.GetSelection() == 1 else "en",
-        )
+        lang = "ar" if self.lang_choice.currentIndex() == 1 else "en"
+        self.settings.set("general", "language", lang)
         self.settings.save()
-        self.EndModal(wx.ID_OK)
+        self.accept()
 
-    def on_reset(self, event=None):
+    def on_reset(self):
         prompt = self.translator._("Reset settings to default?")
-        if (
-            wx.MessageBox(prompt, self.translator._("Confirm Reset"), wx.YES_NO)
-            == wx.YES
-        ):
-            self.settings.reset_to_defaults()
-            self.confirm_archive_cb.SetValue(
-                self.settings.get("behavior", "confirm_on_archive", False)
-            )
-            self.confirm_delete_cb.SetValue(
-                self.settings.get("behavior", "confirm_on_delete", True)
-            )
-            self.auto_save_spin.SetValue(
-                self.settings.get("behavior", "auto_save_interval", 2)
-            )
-            self.lang_choice.SetSelection(
-                1 if self.settings.get("general", "language", "en") == "ar" else 0
-            )
+        reply = QMessageBox.question(
+            self,
+            self.translator._("Confirm Reset"),
+            prompt,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            self._apply_reset()
+
+    def _apply_reset(self):
+        self.settings.reset_to_defaults()
+        archive_val = self.settings.get("behavior", "confirm_on_archive", False)
+        self.confirm_archive_cb.setChecked(archive_val)
+        delete_val = self.settings.get("behavior", "confirm_on_delete", True)
+        self.confirm_delete_cb.setChecked(delete_val)
+        self.auto_save_spin.setValue(
+            self.settings.get("behavior", "auto_save_interval", 2)
+        )
+        selected_lang = (
+            1 if self.settings.get("general", "language", "en") == "ar" else 0
+        )
+        self.lang_choice.setCurrentIndex(selected_lang)
