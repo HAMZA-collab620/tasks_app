@@ -10,7 +10,12 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter', 'unittest', 'pydoc', 'sqlite3'],
+    excludes=[
+        'tkinter', 'unittest', 'pydoc', 'sqlite3',
+        'PySide6.QtNetwork', 'PySide6.QtQml', 'PySide6.QtQuick',
+        'PySide6.QtPdf', 'PySide6.QtOpenGL', 'PySide6.QtTest',
+        'PySide6.QtSpatialAudio',
+    ],
     noarchive=False,
     optimize=0,
 )
