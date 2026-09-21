@@ -72,17 +72,25 @@ class AccessibleTaskListWidget(QListWidget):
 class TaskProjectWidget(QWidget):
     """Widget representing a single project tab with native accessible controls."""
 
-    def __init__(self, parent=None, filename: str | Path = "", settings=None):
+    def __init__(
+        self,
+        parent=None,
+        filename: str | Path = "",
+        settings=None,
+        base_dir: Path | None = None,
+    ):
         super().__init__(parent)
         self.filename = Path(filename)
         self.settings = settings
+        self.base_dir = Path(base_dir) if base_dir else get_base_dir()
         self.translator = Translator(self.settings)
-        self.model = ProjectModel(self.filename, self.settings, get_base_dir())
+        self.model = ProjectModel(self.filename, self.settings, self.base_dir)
         self.visible_indices: list[int] = []
         self._init_ui()
         if self.model.load_tasks():
             self.update_display()
         self._setup_auto_save()
+
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -370,7 +378,9 @@ class MainWindow(QMainWindow):
     def load_all_projects(self):
         for proj in self.workspace.list_projects():
             if proj["filename"] != DAILY_TEMPLATE_FILENAME:
-                page = TaskProjectWidget(self.notebook, proj["path"], self.settings)
+                page = TaskProjectWidget(
+                    self.notebook, proj["path"], self.settings, self.base_dir
+                )
                 title = get_project_display_name(proj["filename"], self.translator)
                 self.notebook.addTab(page, title)
 
@@ -389,10 +399,13 @@ class MainWindow(QMainWindow):
     def _add_new_project_tab(self, filename: str):
         path = self.workspace.get_project_path(filename)
         if path.exists():
-            page = TaskProjectWidget(self.notebook, path, self.settings)
+            page = TaskProjectWidget(
+                self.notebook, path, self.settings, self.base_dir
+            )
             title = get_project_display_name(filename, self.translator)
             self.notebook.addTab(page, title)
             self.notebook.setCurrentIndex(self.notebook.count() - 1)
+
 
     def on_project_renamed(self, old_fn: str, new_fn: str):
         old_p = self.workspace.get_project_path(old_fn).resolve()
