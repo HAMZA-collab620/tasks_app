@@ -180,20 +180,20 @@ class ProjectManagerDialog(QDialog):
 
     def _create_action_buttons(self):
         actions = [
-            ("new_btn", self.translator._("&New"), self.on_new, self.translator._("New")),
-            ("open_btn", self.translator._("&Open"), self.on_open, self.translator._("Open")),
-            ("pin_btn", self.translator._("&Pin ⭐"), self.on_pin, self.translator._("Pin")),
-            ("up_btn", self.translator._("Move &Up"), lambda: self.on_move(-1), self.translator._("Move Up")),
-            ("down_btn", self.translator._("Move &Down"), lambda: self.on_move(1), self.translator._("Move Down")),
-            ("rename_btn", self.translator._("&Rename"), self.on_rename, self.translator._("Rename")),
-            ("notepad_btn", self.translator._("Note&pad"), self.on_notepad, self.translator._("Notepad")),
-            ("delete_btn", self.translator._("&Delete"), self.on_delete, self.translator._("Delete")),
-            ("close_btn", self.translator._("&Close"), self.reject, self.translator._("Close")),
+            ("new_btn", self.translator._("&New"), self.on_new),
+            ("open_btn", self.translator._("&Open"), self.on_open),
+            ("pin_btn", self.translator._("&Pin ⭐"), self.on_pin),
+            ("up_btn", self.translator._("Move &Up"), lambda: self.on_move(-1)),
+            ("down_btn", self.translator._("Move &Down"), lambda: self.on_move(1)),
+            ("rename_btn", self.translator._("&Rename"), self.on_rename),
+            ("notepad_btn", self.translator._("Note&pad"), self.on_notepad),
+            ("delete_btn", self.translator._("&Delete"), self.on_delete),
+            ("close_btn", self.translator._("&Close"), self.reject),
         ]
         self.buttons = []
-        for attr_name, label, slot, acc_name in actions:
+        for attr_name, label, slot in actions:
             btn = QPushButton(label, self)
-            btn.setAccessibleName(acc_name)
+            btn.setAccessibleName(label.replace("&", "").strip())
             btn.clicked.connect(slot)
             setattr(self, attr_name, btn)
             self.buttons.append(btn)
